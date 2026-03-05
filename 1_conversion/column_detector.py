@@ -6,6 +6,10 @@ and reorder text in the correct Hebrew reading order (right column first,
 then left column, top to bottom within each column).
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class ColumnDetector:
     """Detects and handles multi-column layouts in OCR results."""
@@ -52,8 +56,26 @@ class ColumnDetector:
                 "y_max": max(ys),
             })
 
+        # Debug: log block positions
+        logger.info(f"    Column detection: {len(block_info)} blocks found")
+        for i, b in enumerate(block_info):
+            logger.info(
+                f"      Block {i}: x=[{b['x_min']:.0f}-{b['x_max']:.0f}] "
+                f"y=[{b['y_min']:.0f}-{b['y_max']:.0f}] "
+                f"center_x={b['x_center']:.0f} "
+                f"text={b['text'][:40]}..."
+            )
+
         # Detect columns
         columns = self._detect_columns(block_info)
+
+        logger.info(f"    Columns detected: {len(columns)}")
+        for i, col in enumerate(columns):
+            x_centers = [b["x_center"] for b in col]
+            logger.info(
+                f"      Column {i}: {len(col)} blocks, "
+                f"avg_x_center={sum(x_centers)/len(x_centers):.0f}"
+            )
 
         if len(columns) <= 1:
             # Single column - just sort top to bottom
