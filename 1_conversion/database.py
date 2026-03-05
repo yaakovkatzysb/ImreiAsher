@@ -14,8 +14,9 @@ class Database:
     def __init__(self, db_path: str = "data/output/database.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._lock = __import__('threading').Lock()
         self._create_tables()
 
     def _create_tables(self):
@@ -80,6 +81,10 @@ class Database:
         """
         quality = result.get("quality_report", {})
 
+        with self._lock:
+            return self._insert_document_locked(result, quality)
+
+    def _insert_document_locked(self, result: dict, quality: dict) -> int:
         cursor = self.conn.execute("""
             INSERT OR REPLACE INTO documents
                 (filename, source, year, pages, confidence, quality_score,
