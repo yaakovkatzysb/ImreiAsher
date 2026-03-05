@@ -6,9 +6,27 @@ boundaries via a histogram of x-positions, then splits lines by column
 and outputs text in Hebrew reading order (right column first, then left).
 """
 
+import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Punctuation tokens that should not have a space before them
+_PUNCT_NO_SPACE_BEFORE = re.compile(r"^[,\.;:!?\)\]\}\"״׳']+$")
+
+
+def _join_words(words) -> str:
+    """Join word texts, suppressing the space before punctuation-only tokens."""
+    parts = []
+    for w in words:
+        token = w["text"] if isinstance(w, dict) else w
+        if parts and _PUNCT_NO_SPACE_BEFORE.match(token):
+            parts.append(token)
+        else:
+            if parts:
+                parts.append(" ")
+            parts.append(token)
+    return "".join(parts)
 
 
 class ColumnDetector:
@@ -60,7 +78,7 @@ class ColumnDetector:
         page_width = page_x_max - page_x_min
 
         if page_width <= 0:
-            return " ".join(w["text"] for w in word_info)
+            return _join_words(word_info)
 
         # Group words into text lines
         lines = self._group_into_lines(word_info)
@@ -159,26 +177,26 @@ class ColumnDetector:
 
         if top_spanning:
             top_text = "\n".join(
-                " ".join(w["text"] for w in line) for _, line in top_spanning
+                _join_words(line) for _, line in top_spanning
             )
             parts.append(top_text)
 
         if right_col_lines:
             right_text = "\n".join(
-                " ".join(w["text"] for w in line) for _, line in right_col_lines
+                _join_words(line) for _, line in right_col_lines
             )
             parts.append(right_text)
 
         if left_col_lines:
             left_text = "\n".join(
-                " ".join(w["text"] for w in line) for _, line in left_col_lines
+                _join_words(line) for _, line in left_col_lines
             )
             parts.append(left_text)
 
         # Add spanning lines that appear within/after column content
         if mid_spanning:
             mid_text = "\n".join(
-                " ".join(w["text"] for w in line) for _, line in mid_spanning
+                _join_words(line) for _, line in mid_spanning
             )
             parts.append(mid_text)
 
@@ -220,7 +238,7 @@ class ColumnDetector:
             if large_ratio >= 0.6:
                 # Most words are large -> this is a header line
                 sorted_line = sorted(line, key=lambda w: -w["x_center"])  # RTL
-                text = " ".join(w["text"] for w in sorted_line)
+                text = _join_words(sorted_line)
                 y = sum(w["y_center"] for w in line) / len(line)
                 avg_h = sum(w["height"] for w in line) / len(line)
                 header_lines.append({"text": text, "y": y, "avg_height": avg_h})
@@ -403,4 +421,4 @@ class ColumnDetector:
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
         """Convert lines of words to text (single column)."""
-        return "\n".join(" ".join(w["text"] for w in line) for line in lines)
+        return "\n".join(_join_words(line) for line in lines)
