@@ -111,14 +111,22 @@ class PostProcessor:
 
     def _is_interstitial(self, line: str) -> bool:
         """Check if a line is an interstitial continuation marker."""
+        # Normalize spaces around geresh/quotes for OCR variants like "בעמ ' הבא"
+        normalized = re.sub(r"\s*['׳\"״]\s*", "'", line)
+
         for phrase in self.interstitial_phrases:
-            if phrase in line:
+            if phrase in line or phrase in normalized:
                 return True
 
-        # Generic pattern: המשך ... בעמוד / המשך מעמ'
+        # Generic patterns for continuation markers
         if re.search(r"המשך\s+.+\s+בעמוד", line):
             return True
         if re.search(r"המשך\s+מעמ", line):
+            return True
+        if re.search(r"המשך\s+בעמ", normalized):
+            return True
+        # "המשך יבוא אי"ה" and variants
+        if re.search(r"המשך\s+יבוא", line):
             return True
 
         return False
