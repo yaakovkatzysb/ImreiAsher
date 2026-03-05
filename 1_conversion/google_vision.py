@@ -89,24 +89,23 @@ class GoogleVisionOCR:
                 for lang in page.property.detected_languages:
                     languages.add(lang.language_code)
 
-        # Extract text blocks with positions
+        # Extract paragraphs with positions (not blocks, which can span multiple columns)
         blocks = []
         for page in annotation.pages:
             for block in page.blocks:
-                block_text = ""
                 for paragraph in block.paragraphs:
+                    para_text = ""
                     for word in paragraph.words:
                         word_text = "".join(
                             symbol.text for symbol in word.symbols
                         )
-                        block_text += word_text + " "
-                    block_text += "\n"
+                        para_text += word_text + " "
 
-                blocks.append({
-                    "text": block_text.strip(),
-                    "confidence": block.confidence,
-                    "bbox": self._extract_bbox(block.bounding_box),
-                })
+                    blocks.append({
+                        "text": para_text.strip(),
+                        "confidence": paragraph.confidence,
+                        "bbox": self._extract_bbox(paragraph.bounding_box),
+                    })
 
         return {
             "text": annotation.text,

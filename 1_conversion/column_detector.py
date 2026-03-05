@@ -1,7 +1,7 @@
 """
 Column detector for multi-column Hebrew text layouts.
 
-Analyzes block bounding boxes from Google Vision to detect columns
+Analyzes paragraph bounding boxes from Google Vision to detect columns
 and reorder text in the correct Hebrew reading order (right column first,
 then left column, top to bottom within each column).
 """
@@ -14,14 +14,12 @@ logger = logging.getLogger(__name__)
 class ColumnDetector:
     """Detects and handles multi-column layouts in OCR results."""
 
-    def __init__(self, overlap_threshold: float = 0.4, min_column_gap_ratio: float = 0.05):
+    def __init__(self, min_column_gap_ratio: float = 0.15):
         """
         Args:
-            overlap_threshold: Max horizontal overlap ratio between columns (0-1).
-                Blocks overlapping more than this are considered same column.
-            min_column_gap_ratio: Minimum gap between columns as ratio of page width.
+            min_column_gap_ratio: Minimum gap between column centers as ratio of page width.
+                If the largest gap in x_center values exceeds this, we split into columns.
         """
-        self.overlap_threshold = overlap_threshold
         self.min_column_gap_ratio = min_column_gap_ratio
 
     def reorder_blocks_by_columns(self, blocks: list[dict]) -> str:
@@ -54,26 +52,35 @@ class ColumnDetector:
                 "x_center": sum(xs) / len(xs),
                 "y_min": min(ys),
                 "y_max": max(ys),
+                "width": max(xs) - min(xs),
             })
 
-        # Debug: log block positions
-        logger.info(f"    Column detection: {len(block_info)} blocks found")
-        for i, b in enumerate(block_info):
-            logger.info(
-                f"      Block {i}: x=[{b['x_min']:.0f}-{b['x_max']:.0f}] "
-                f"y=[{b['y_min']:.0f}-{b['y_max']:.0f}] "
-                f"center_x={b['x_center']:.0f} "
-                f"text={b['text'][:40]}..."
-            )
+        # Find page dimensions
+        page_x_min = min(b["x_min"] for b in block_info)
+        page_x_max = max(b["x_max"] for b in block_info)
+        page_width = page_x_max - page_x_min
 
-        # Detect columns
-        columns = self._detect_columns(block_info)
+        if page_width <= 0:
+            sorted_blocks = sorted(block_info, key=lambda b: b["y_min"])
+            return "\n".join(b["text"] for b in sorted_blocks)
+
+        # Filter out full-width blocks (headers, footers) — width > 70% of page
+        full_width_threshold = page_width * 0.70
+        narrow_blocks = [b for b in block_info if b["width"] < full_width_threshold]
+        wide_blocks = [b for b in block_info if b["width"] >= full_width_threshold]
+
+        # Debug logging
+        logger.info(f"    Column detection: {len(block_info)} paragraphs "
+                     f"({len(narrow_blocks)} narrow, {len(wide_blocks)} wide)")
+
+        # Detect columns from narrow blocks only
+        columns = self._detect_columns(narrow_blocks, page_width)
 
         logger.info(f"    Columns detected: {len(columns)}")
         for i, col in enumerate(columns):
             x_centers = [b["x_center"] for b in col]
             logger.info(
-                f"      Column {i}: {len(col)} blocks, "
+                f"      Column {i}: {len(col)} paragraphs, "
                 f"avg_x_center={sum(x_centers)/len(x_centers):.0f}"
             )
 
@@ -83,86 +90,70 @@ class ColumnDetector:
             return "\n".join(b["text"] for b in sorted_blocks)
 
         # Multiple columns: sort columns right-to-left (Hebrew reading order)
-        # Then sort blocks within each column top-to-bottom
         columns.sort(key=lambda col: -self._column_x_center(col))
 
+        # Place wide blocks (headers/footers) before the columns
         parts = []
-        for column in columns:
-            column.sort(key=lambda b: b["y_min"])
-            column_text = "\n".join(b["text"] for b in column)
-            parts.append(column_text)
+        if wide_blocks:
+            wide_blocks.sort(key=lambda b: b["y_min"])
+            # Wide blocks that come before all columns go first
+            min_col_y = min(b["y_min"] for col in columns for b in col)
+            header_blocks = [b for b in wide_blocks if b["y_min"] < min_col_y]
+            footer_blocks = [b for b in wide_blocks if b["y_min"] >= min_col_y]
+
+            if header_blocks:
+                parts.append("\n".join(b["text"] for b in header_blocks))
+
+            for column in columns:
+                column.sort(key=lambda b: b["y_min"])
+                parts.append("\n".join(b["text"] for b in column))
+
+            if footer_blocks:
+                parts.append("\n".join(b["text"] for b in footer_blocks))
+        else:
+            for column in columns:
+                column.sort(key=lambda b: b["y_min"])
+                parts.append("\n".join(b["text"] for b in column))
 
         return "\n\n".join(parts)
 
-    def _detect_columns(self, block_info: list[dict]) -> list[list[dict]]:
+    def _detect_columns(self, block_info: list[dict], page_width: float) -> list[list[dict]]:
         """
-        Cluster blocks into columns based on horizontal position.
-
-        Uses a simple approach: sort blocks by x_center, then find gaps
-        that indicate column boundaries.
+        Cluster blocks into columns by finding the largest gap in x_center values.
         """
         if not block_info:
             return []
 
-        # Find page width
-        page_x_min = min(b["x_min"] for b in block_info)
-        page_x_max = max(b["x_max"] for b in block_info)
-        page_width = page_x_max - page_x_min
-
-        if page_width <= 0:
+        if len(block_info) == 1:
             return [block_info]
 
         min_gap = page_width * self.min_column_gap_ratio
 
-        # Sort blocks by x_center
+        # Sort by x_center
         sorted_blocks = sorted(block_info, key=lambda b: b["x_center"])
 
-        # Find natural column boundaries by looking at gaps in x_center values
-        columns = [[sorted_blocks[0]]]
-
+        # Find the largest gap between consecutive x_centers
+        best_gap = 0
+        best_gap_idx = -1
         for i in range(1, len(sorted_blocks)):
-            current = sorted_blocks[i]
-            prev = sorted_blocks[i - 1]
+            gap = sorted_blocks[i]["x_center"] - sorted_blocks[i - 1]["x_center"]
+            if gap > best_gap:
+                best_gap = gap
+                best_gap_idx = i
 
-            # Check if there's a significant gap between this block and the previous
-            # Use the gap between the right edge of left block and left edge of right block
-            gap = current["x_min"] - prev["x_max"]
+        logger.info(f"    Largest x_center gap: {best_gap:.0f} "
+                     f"(threshold: {min_gap:.0f}, page_width: {page_width:.0f})")
 
-            # Also check if blocks overlap horizontally
-            overlap = self._horizontal_overlap_ratio(prev, current)
+        if best_gap >= min_gap and best_gap_idx > 0:
+            # Split into two columns at the largest gap
+            left_group = sorted_blocks[:best_gap_idx]
+            right_group = sorted_blocks[best_gap_idx:]
 
-            if gap > min_gap and overlap < self.overlap_threshold:
-                # New column
-                columns.append([current])
-            else:
-                # Same column as previous block
-                columns[-1].append(current)
+            # Verify both groups have enough content (at least 2 paragraphs each)
+            if len(left_group) >= 2 and len(right_group) >= 2:
+                return [left_group, right_group]
 
-        # Filter out noise: columns with very little text compared to main columns
-        if len(columns) > 1:
-            max_blocks = max(len(col) for col in columns)
-            columns = [col for col in columns if len(col) >= max(1, max_blocks * 0.15)]
-
-        return columns
-
-    def _horizontal_overlap_ratio(self, block_a: dict, block_b: dict) -> float:
-        """Calculate horizontal overlap ratio between two blocks."""
-        overlap_start = max(block_a["x_min"], block_b["x_min"])
-        overlap_end = min(block_a["x_max"], block_b["x_max"])
-
-        if overlap_start >= overlap_end:
-            return 0.0
-
-        overlap_width = overlap_end - overlap_start
-        min_width = min(
-            block_a["x_max"] - block_a["x_min"],
-            block_b["x_max"] - block_b["x_min"],
-        )
-
-        if min_width <= 0:
-            return 0.0
-
-        return overlap_width / min_width
+        return [block_info]
 
     def _column_x_center(self, column: list[dict]) -> float:
         """Get average x_center of a column."""
