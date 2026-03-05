@@ -73,6 +73,9 @@ class ColumnDetector:
 
         logger.info(f"    Column boundary at x={boundary:.0f}")
 
+        # Calculate typical column line word count for comparison
+        page_center = (page_x_min + page_x_max) / 2
+
         # Split lines into right column, left column, or spanning (headers)
         right_col_lines = []
         left_col_lines = []
@@ -89,6 +92,13 @@ class ColumnDetector:
                     y = sum(w["y_center"] for w in line) / len(line)
                     spanning_lines.append((y, line_sorted))
                     continue
+
+            # Check if this is a short centered line (header fragment)
+            if self._is_centered_line(line, boundary, page_center, page_width):
+                line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
+                y = sum(w["y_center"] for w in line) / len(line)
+                spanning_lines.append((y, line_sorted))
+                continue
 
             if right_words:
                 right_words.sort(key=lambda w: -w["x_center"])  # RTL
@@ -225,6 +235,41 @@ class ColumnDetector:
             return boundary_x
 
         return None
+
+    def _is_centered_line(
+        self, line: list[dict], boundary: float, page_center: float, page_width: float
+    ) -> bool:
+        """
+        Check if a line is a short centered line (like a header fragment).
+
+        Short lines (few words) whose center is near the page center are likely
+        headers, not column content. Column content lines are longer and aligned
+        to one side.
+        """
+        if not line:
+            return False
+
+        # Line extent
+        line_x_min = min(w["x_min"] for w in line)
+        line_x_max = max(w["x_max"] for w in line)
+        line_width = line_x_max - line_x_min
+        line_center = (line_x_min + line_x_max) / 2
+
+        # A centered line:
+        # 1. Is short relative to page width (covers less than ~40% of page)
+        # 2. Its center is near the page center / boundary
+        width_ratio = line_width / page_width if page_width > 0 else 1
+        center_offset = abs(line_center - page_center) / page_width if page_width > 0 else 1
+
+        # Short line near center -> header
+        if width_ratio < 0.4 and center_offset < 0.15:
+            logger.info(
+                f"    Centered header line detected: '{' '.join(w['text'] for w in line)}' "
+                f"(width={width_ratio:.0%}, offset={center_offset:.0%})"
+            )
+            return True
+
+        return False
 
     def _is_spanning_line(self, line: list[dict], boundary: float) -> bool:
         """
