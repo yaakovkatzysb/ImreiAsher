@@ -43,3 +43,32 @@ quality_assessment:
   good_threshold: 0.90   # above = good quality, skip pre-processing
   medium_threshold: 0.75  # above = medium, light pre-processing
   # below medium = poor quality, full pre-processing
+
+# Post-processing (text cleanup after OCR)
+post_processing:
+  # Interstitial phrases to remove (continuation markers between pages)
+  interstitial_phrases:
+    - "המשך בעמוד הבא"
+    - "המשך בעמוד"
+    - "המשך פנינים יקרים"
+    - "המשך בעמ'"
+
+  # Known repeating headers (removed from every page)
+  # Auto-detection also finds headers that repeat across most pages
+  repeating_headers:
+    - "שיחת קודש ממורנו ורבנו זיע\"א"
+
+  # How many top lines to scan for repeating header detection
+  header_scan_lines: 3
+
+  # Minimum ratio of pages a line must appear on to be considered a header
+  header_min_page_ratio: 0.5
+
+  # Document header template (inserted at beginning of output)
+  # {issue_number} and {issue_date} are replaced from filename
+  header_template: |
+    ══════════════════════════════
+               החברותא
+         גליון מס' {issue_number}
+         {issue_date}
+    ══════════════════════════════

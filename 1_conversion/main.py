@@ -24,6 +24,7 @@ from file_manager import FileManager
 from google_vision import GoogleVisionOCR
 from preprocessor import ImagePreprocessor
 from quality_checker import QualityChecker
+from post_processor import PostProcessor
 from reporter import Reporter
 
 logging.basicConfig(
@@ -57,6 +58,7 @@ class AdaptiveOCRPipeline:
         self.database = Database(self.config["paths"]["database_path"])
         self.reporter = Reporter(self.config["paths"]["output_reports_dir"])
         self.column_detector = ColumnDetector()
+        self.post_processor = PostProcessor(self.config.get("post_processing", {}))
 
         self.good_threshold = self.config["quality_assessment"]["good_threshold"]
         self.medium_threshold = self.config["quality_assessment"]["medium_threshold"]
@@ -95,16 +97,20 @@ class AdaptiveOCRPipeline:
                 page_result = self._process_page(image_bytes, i + 1)
                 pages_data.append(page_result)
 
-            # Step 3: Quality checks on combined text
+            # Step 3: Post-processing (remove interstitials, headers, add template)
+            pages_data = self.post_processor.process_document(pages_data, filename)
+            logger.info(f"  Post-processing complete")
+
+            # Step 4: Quality checks on combined text
             full_text = "\n".join(p["text"] for p in pages_data if p.get("text"))
             quality_report = self.quality_checker.check_all(full_text, len(images))
 
-            # Step 4: Dictionary check (if dictionary available)
+            # Step 5: Dictionary check (if dictionary available)
             if self.dictionary_checker.has_dictionary():
                 dict_report = self.dictionary_checker.check_text(full_text)
                 quality_report["dictionary"] = dict_report
 
-            # Step 5: Build and save result
+            # Step 6: Build and save result
             result = self.file_manager.build_result(pdf_path, pages_data, quality_report)
 
             elapsed = time.time() - start_time
