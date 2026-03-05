@@ -41,9 +41,18 @@ logger = logging.getLogger(__name__)
 class AdaptiveOCRPipeline:
     """Main pipeline that processes PDFs through OCR with adaptive quality handling."""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = None):
+        # Auto-detect project root (parent of 1_conversion/)
+        self.project_root = Path(__file__).resolve().parent.parent
+
+        if config_path is None:
+            config_path = self.project_root / "config.yaml"
+
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
+
+        # Resolve all relative paths to project root
+        self._resolve_paths()
 
         self.ocr = GoogleVisionOCR(
             credentials_path=self.config["google_vision"]["credentials_path"],
@@ -62,6 +71,21 @@ class AdaptiveOCRPipeline:
 
         self.good_threshold = self.config["quality_assessment"]["good_threshold"]
         self.medium_threshold = self.config["quality_assessment"]["medium_threshold"]
+
+    def _resolve_paths(self):
+        """Resolve all relative paths in config to be relative to project root."""
+        root = self.project_root
+
+        # Resolve paths section
+        for key, value in self.config["paths"].items():
+            p = Path(value)
+            if not p.is_absolute():
+                self.config["paths"][key] = str(root / p)
+
+        # Resolve credentials path
+        cred = Path(self.config["google_vision"]["credentials_path"])
+        if not cred.is_absolute():
+            self.config["google_vision"]["credentials_path"] = str(root / cred)
 
     def process_single(self, pdf_path: Path, force: bool = False) -> dict:
         """
@@ -254,7 +278,7 @@ class AdaptiveOCRPipeline:
 
 def main():
     parser = argparse.ArgumentParser(description="Hebrew OCR Pipeline")
-    parser.add_argument("--config", default="config.yaml", help="Path to config file")
+    parser.add_argument("--config", default=None, help="Path to config file (auto-detected if not set)")
     parser.add_argument("--file", help="Process a single PDF file")
     parser.add_argument("--pilot", type=int, default=0, help="Process only N files (pilot run)")
     parser.add_argument("--reprocess", action="store_true", help="Force reprocess all files")
