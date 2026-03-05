@@ -16,7 +16,8 @@ class GoogleVisionOCR:
 
     def __init__(self, credentials_path: str = "", cache_dir: str = "data/cache"):
         if credentials_path:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+            abs_path = str(Path(credentials_path).resolve())
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abs_path
         self.client = vision.ImageAnnotatorClient()
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
