@@ -3,7 +3,7 @@
 
 # Google Cloud Vision
 google_vision:
-  credentials_path: ""  # path to service account JSON file
+  credentials_path: "credentials/vision-key.json"  # path to service account JSON file
   max_retries: 3
   timeout: 60  # seconds per request
 
