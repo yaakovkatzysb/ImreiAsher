@@ -55,8 +55,7 @@ post_processing:
 
   # Known repeating headers (removed from every page)
   # Auto-detection also finds headers that repeat across most pages
-  repeating_headers:
-    - "שיחת קודש ממורנו ורבנו זיע\"א"
+  repeating_headers: []
 
   # How many top lines to scan for repeating header detection
   header_scan_lines: 3

@@ -231,11 +231,19 @@ class ColumnDetector:
         header_lines.sort(key=lambda h: h["y"])
         return header_lines, body_lines
 
+    # Marker wrapping font-size headers so post-processor won't remove them
+    HEADER_MARKER_START = "[כותרת]"
+    HEADER_MARKER_END = "[/כותרת]"
+
     def _prepend_headers(self, header_lines: list[dict], body_text: str) -> str:
-        """Prepend extracted header lines before the body text."""
+        """Prepend extracted header lines before the body text, wrapped in markers."""
         if not header_lines:
             return body_text
-        header_text = "\n".join(h["text"] for h in header_lines)
+        marked = [
+            f"{self.HEADER_MARKER_START} {h['text']} {self.HEADER_MARKER_END}"
+            for h in header_lines
+        ]
+        header_text = "\n".join(marked)
         if not body_text:
             return header_text
         return header_text + "\n\n" + body_text

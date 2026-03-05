@@ -123,6 +123,16 @@ class AdaptiveOCRPipeline:
 
             # Step 3: Post-processing (remove interstitials, headers, add template)
             pages_data = self.post_processor.process_document(pages_data, filename)
+
+            # Step 3b: Remove header markers (used to protect headers during post-processing)
+            for page in pages_data:
+                if page.get("text"):
+                    page["text"] = (page["text"]
+                        .replace("[כותרת] ", "")
+                        .replace(" [/כותרת]", "")
+                        .replace("[כותרת]", "")
+                        .replace("[/כותרת]", ""))
+
             logger.info(f"  Post-processing complete")
 
             # Step 4: Quality checks on combined text

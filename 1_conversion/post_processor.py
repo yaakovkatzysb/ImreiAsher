@@ -79,6 +79,11 @@ class PostProcessor:
                 cleaned_lines.append(line)
                 continue
 
+            # Skip font-size detected headers (protected from removal)
+            if "[כותרת]" in stripped:
+                cleaned_lines.append(line)
+                continue
+
             # Check interstitial phrases
             if self._is_interstitial(stripped):
                 logger.debug(f"  Removed interstitial: {stripped}")
