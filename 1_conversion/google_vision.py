@@ -49,7 +49,7 @@ class GoogleVisionOCR:
         """
         cache_key = self._get_cache_key(image_bytes)
         cached = self._load_from_cache(cache_key)
-        if cached:
+        if cached and "words" in cached:
             return cached
 
         image = vision.Image(content=image_bytes)
@@ -72,7 +72,7 @@ class GoogleVisionOCR:
         annotation = response.full_text_annotation
 
         if not annotation.text:
-            return {"text": "", "confidence": 0.0, "languages": [], "blocks": []}
+            return {"text": "", "confidence": 0.0, "languages": [], "words": []}
 
         # Calculate average confidence from pages
         confidences = []
@@ -89,29 +89,27 @@ class GoogleVisionOCR:
                 for lang in page.property.detected_languages:
                     languages.add(lang.language_code)
 
-        # Extract paragraphs with positions (not blocks, which can span multiple columns)
-        blocks = []
+        # Extract individual words with positions (finest granularity for column detection)
+        words = []
         for page in annotation.pages:
             for block in page.blocks:
                 for paragraph in block.paragraphs:
-                    para_text = ""
                     for word in paragraph.words:
                         word_text = "".join(
                             symbol.text for symbol in word.symbols
                         )
-                        para_text += word_text + " "
-
-                    blocks.append({
-                        "text": para_text.strip(),
-                        "confidence": paragraph.confidence,
-                        "bbox": self._extract_bbox(paragraph.bounding_box),
-                    })
+                        if word_text.strip():
+                            words.append({
+                                "text": word_text,
+                                "confidence": word.confidence,
+                                "bbox": self._extract_bbox(word.bounding_box),
+                            })
 
         return {
             "text": annotation.text,
             "confidence": round(avg_confidence, 4),
             "languages": sorted(languages),
-            "blocks": blocks,
+            "words": words,
         }
 
     def _extract_bbox(self, bounding_box) -> list:

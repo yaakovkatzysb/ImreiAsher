@@ -147,9 +147,9 @@ class AdaptiveOCRPipeline:
         ocr_result = self.ocr.detect_text(image_bytes)
 
         # Reorder text by columns (right-to-left for Hebrew)
-        blocks = ocr_result.get("blocks", [])
-        if blocks:
-            text = self.column_detector.reorder_blocks_by_columns(blocks)
+        words = ocr_result.get("words", [])
+        if words:
+            text = self.column_detector.reorder_by_columns(words)
         else:
             text = ocr_result["text"]
 

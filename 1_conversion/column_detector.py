@@ -1,9 +1,9 @@
 """
 Column detector for multi-column Hebrew text layouts.
 
-Analyzes paragraph bounding boxes from Google Vision to detect columns
-and reorder text in the correct Hebrew reading order (right column first,
-then left column, top to bottom within each column).
+Works at the word level: groups words into text lines, detects column
+boundaries via a histogram of x-positions, then splits lines by column
+and outputs text in Hebrew reading order (right column first, then left).
 """
 
 import logging
@@ -12,149 +12,186 @@ logger = logging.getLogger(__name__)
 
 
 class ColumnDetector:
-    """Detects and handles multi-column layouts in OCR results."""
+    """Detects and handles multi-column layouts using word-level positioning."""
 
-    def __init__(self, min_column_gap_ratio: float = 0.15):
+    def reorder_by_columns(self, words: list[dict]) -> str:
         """
-        Args:
-            min_column_gap_ratio: Minimum gap between column centers as ratio of page width.
-                If the largest gap in x_center values exceeds this, we split into columns.
-        """
-        self.min_column_gap_ratio = min_column_gap_ratio
-
-    def reorder_blocks_by_columns(self, blocks: list[dict]) -> str:
-        """
-        Detect columns and return text in correct reading order.
+        Detect columns from word positions and return text in correct reading order.
 
         Args:
-            blocks: List of dicts with 'text' and 'bbox' keys.
-                    bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]].
+            words: List of dicts with 'text' and 'bbox' keys.
+                   bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]].
 
         Returns:
             Text reordered by columns (right-to-left for Hebrew).
         """
-        if not blocks:
+        if not words:
             return ""
 
-        if len(blocks) <= 1:
-            return blocks[0]["text"] if blocks else ""
-
-        # Calculate x-ranges for each block
-        block_info = []
-        for block in blocks:
-            bbox = block["bbox"]
+        # Extract positions
+        word_info = []
+        for w in words:
+            bbox = w["bbox"]
             xs = [p[0] for p in bbox]
             ys = [p[1] for p in bbox]
-            block_info.append({
-                "text": block["text"],
+            text = w["text"].strip()
+            if not text:
+                continue
+            word_info.append({
+                "text": text,
                 "x_min": min(xs),
                 "x_max": max(xs),
-                "x_center": sum(xs) / len(xs),
+                "x_center": (min(xs) + max(xs)) / 2,
                 "y_min": min(ys),
                 "y_max": max(ys),
-                "width": max(xs) - min(xs),
+                "y_center": (min(ys) + max(ys)) / 2,
+                "height": max(ys) - min(ys),
             })
 
-        # Find page dimensions
-        page_x_min = min(b["x_min"] for b in block_info)
-        page_x_max = max(b["x_max"] for b in block_info)
+        if not word_info:
+            return ""
+
+        # Page dimensions
+        page_x_min = min(w["x_min"] for w in word_info)
+        page_x_max = max(w["x_max"] for w in word_info)
         page_width = page_x_max - page_x_min
 
         if page_width <= 0:
-            sorted_blocks = sorted(block_info, key=lambda b: b["y_min"])
-            return "\n".join(b["text"] for b in sorted_blocks)
+            return " ".join(w["text"] for w in word_info)
 
-        # Filter out full-width blocks (headers, footers) — width > 70% of page
-        full_width_threshold = page_width * 0.70
-        narrow_blocks = [b for b in block_info if b["width"] < full_width_threshold]
-        wide_blocks = [b for b in block_info if b["width"] >= full_width_threshold]
+        # Group words into text lines
+        lines = self._group_into_lines(word_info)
 
-        # Debug logging
-        logger.info(f"    Column detection: {len(block_info)} paragraphs "
-                     f"({len(narrow_blocks)} narrow, {len(wide_blocks)} wide)")
+        logger.info(f"    Column detection: {len(word_info)} words, {len(lines)} lines")
 
-        # Detect columns from narrow blocks only
-        columns = self._detect_columns(narrow_blocks, page_width)
+        # Detect column boundary using histogram
+        boundary = self._find_column_boundary(word_info, page_width, page_x_min)
 
-        logger.info(f"    Columns detected: {len(columns)}")
-        for i, col in enumerate(columns):
-            x_centers = [b["x_center"] for b in col]
-            logger.info(
-                f"      Column {i}: {len(col)} paragraphs, "
-                f"avg_x_center={sum(x_centers)/len(x_centers):.0f}"
-            )
+        if boundary is None:
+            logger.info("    Columns detected: 1")
+            return self._lines_to_text(lines)
 
-        if len(columns) <= 1:
-            # Single column - just sort top to bottom
-            sorted_blocks = sorted(block_info, key=lambda b: b["y_min"])
-            return "\n".join(b["text"] for b in sorted_blocks)
+        logger.info(f"    Column boundary at x={boundary:.0f}")
 
-        # Multiple columns: sort columns right-to-left (Hebrew reading order)
-        columns.sort(key=lambda col: -self._column_x_center(col))
+        # Split lines into right and left column segments
+        right_col_lines = []
+        left_col_lines = []
 
-        # Place wide blocks (headers/footers) before the columns
+        for line in lines:
+            right_words = [w for w in line if w["x_center"] > boundary]
+            left_words = [w for w in line if w["x_center"] <= boundary]
+
+            if right_words:
+                right_words.sort(key=lambda w: -w["x_center"])  # RTL
+                y = sum(w["y_center"] for w in right_words) / len(right_words)
+                right_col_lines.append((y, right_words))
+
+            if left_words:
+                left_words.sort(key=lambda w: -w["x_center"])  # RTL
+                y = sum(w["y_center"] for w in left_words) / len(left_words)
+                left_col_lines.append((y, left_words))
+
+        # Sort by y within each column
+        right_col_lines.sort(key=lambda x: x[0])
+        left_col_lines.sort(key=lambda x: x[0])
+
+        logger.info(
+            f"    Columns detected: 2 "
+            f"(right: {len(right_col_lines)} lines, left: {len(left_col_lines)} lines)"
+        )
+
+        # Build text: right column first (Hebrew reading order), then left
         parts = []
-        if wide_blocks:
-            wide_blocks.sort(key=lambda b: b["y_min"])
-            # Wide blocks that come before all columns go first
-            min_col_y = min(b["y_min"] for col in columns for b in col)
-            header_blocks = [b for b in wide_blocks if b["y_min"] < min_col_y]
-            footer_blocks = [b for b in wide_blocks if b["y_min"] >= min_col_y]
 
-            if header_blocks:
-                parts.append("\n".join(b["text"] for b in header_blocks))
+        if right_col_lines:
+            right_text = "\n".join(
+                " ".join(w["text"] for w in line) for _, line in right_col_lines
+            )
+            parts.append(right_text)
 
-            for column in columns:
-                column.sort(key=lambda b: b["y_min"])
-                parts.append("\n".join(b["text"] for b in column))
-
-            if footer_blocks:
-                parts.append("\n".join(b["text"] for b in footer_blocks))
-        else:
-            for column in columns:
-                column.sort(key=lambda b: b["y_min"])
-                parts.append("\n".join(b["text"] for b in column))
+        if left_col_lines:
+            left_text = "\n".join(
+                " ".join(w["text"] for w in line) for _, line in left_col_lines
+            )
+            parts.append(left_text)
 
         return "\n\n".join(parts)
 
-    def _detect_columns(self, block_info: list[dict], page_width: float) -> list[list[dict]]:
+    def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
+        """Group words into text lines based on y-proximity."""
+        # Estimate line height
+        heights = [w["height"] for w in word_info if w["height"] > 5]
+        avg_height = sum(heights) / len(heights) if heights else 30
+        threshold = avg_height * 0.5
+
+        # Sort by y_center
+        sorted_words = sorted(word_info, key=lambda w: w["y_center"])
+
+        lines = []
+        current_line = [sorted_words[0]]
+        line_y = sorted_words[0]["y_center"]
+
+        for w in sorted_words[1:]:
+            if abs(w["y_center"] - line_y) <= threshold:
+                current_line.append(w)
+                line_y = sum(ww["y_center"] for ww in current_line) / len(current_line)
+            else:
+                current_line.sort(key=lambda w: -w["x_center"])  # RTL
+                lines.append(current_line)
+                current_line = [w]
+                line_y = w["y_center"]
+
+        current_line.sort(key=lambda w: -w["x_center"])
+        lines.append(current_line)
+
+        return lines
+
+    def _find_column_boundary(
+        self, word_info: list[dict], page_width: float, page_x_min: float
+    ) -> float | None:
         """
-        Cluster blocks into columns by finding the largest gap in x_center values.
+        Find column boundary using a histogram of word x-positions.
+
+        Divides the page into bins and looks for an empty/sparse bin
+        in the middle third - this indicates the column gutter.
         """
-        if not block_info:
-            return []
+        bin_width = max(30, page_width / 40)
+        num_bins = int(page_width / bin_width) + 1
+        bins = [0] * num_bins
 
-        if len(block_info) == 1:
-            return [block_info]
+        for w in word_info:
+            bin_idx = min(int((w["x_center"] - page_x_min) / bin_width), num_bins - 1)
+            bins[bin_idx] += 1
 
-        min_gap = page_width * self.min_column_gap_ratio
+        # Look for the emptiest bin in the middle third
+        third_start = num_bins // 3
+        third_end = 2 * num_bins // 3
 
-        # Sort by x_center
-        sorted_blocks = sorted(block_info, key=lambda b: b["x_center"])
+        if third_start >= third_end:
+            return None
 
-        # Find the largest gap between consecutive x_centers
-        best_gap = 0
-        best_gap_idx = -1
-        for i in range(1, len(sorted_blocks)):
-            gap = sorted_blocks[i]["x_center"] - sorted_blocks[i - 1]["x_center"]
-            if gap > best_gap:
-                best_gap = gap
-                best_gap_idx = i
+        min_count = float("inf")
+        min_idx = -1
+        for i in range(third_start, third_end):
+            if bins[i] < min_count:
+                min_count = bins[i]
+                min_idx = i
 
-        logger.info(f"    Largest x_center gap: {best_gap:.0f} "
-                     f"(threshold: {min_gap:.0f}, page_width: {page_width:.0f})")
+        # The gutter bin should have very few words compared to average
+        total_words = sum(bins)
+        avg_per_bin = total_words / num_bins if num_bins > 0 else 0
 
-        if best_gap >= min_gap and best_gap_idx > 0:
-            # Split into two columns at the largest gap
-            left_group = sorted_blocks[:best_gap_idx]
-            right_group = sorted_blocks[best_gap_idx:]
+        logger.info(
+            f"    Histogram: gutter bin {min_idx} has {min_count} words "
+            f"(avg {avg_per_bin:.1f}/bin, threshold {max(1, avg_per_bin * 0.15):.1f})"
+        )
 
-            # Verify both groups have enough content (at least 2 paragraphs each)
-            if len(left_group) >= 2 and len(right_group) >= 2:
-                return [left_group, right_group]
+        if min_count <= max(1, avg_per_bin * 0.15):
+            boundary_x = page_x_min + (min_idx + 0.5) * bin_width
+            return boundary_x
 
-        return [block_info]
+        return None
 
-    def _column_x_center(self, column: list[dict]) -> float:
-        """Get average x_center of a column."""
-        return sum(b["x_center"] for b in column) / len(column)
+    def _lines_to_text(self, lines: list[list[dict]]) -> str:
+        """Convert lines of words to text (single column)."""
+        return "\n".join(" ".join(w["text"] for w in line) for line in lines)
