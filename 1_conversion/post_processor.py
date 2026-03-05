@@ -107,6 +107,10 @@ class PostProcessor:
 
         # Remove leading/trailing blank lines
         result = "\n".join(cleaned_lines).strip()
+
+        # Remove spurious spaces before punctuation (OCR artifact)
+        result = re.sub(r" +([,\.;:!?\?\)\]\}])", r"\1", result)
+
         return result
 
     def _is_interstitial(self, line: str) -> bool:
