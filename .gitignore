@@ -1,5 +1,4 @@
 # Data files
-data/input/*.pdf
 data/output/
 data/cache/
 data/dictionaries/*.txt
