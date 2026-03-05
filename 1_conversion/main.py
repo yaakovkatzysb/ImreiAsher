@@ -17,6 +17,7 @@ from pathlib import Path
 
 import yaml
 
+from column_detector import ColumnDetector
 from database import Database
 from dictionary_checker import HebrewDictionaryChecker
 from file_manager import FileManager
@@ -55,6 +56,7 @@ class AdaptiveOCRPipeline:
         )
         self.database = Database(self.config["paths"]["database_path"])
         self.reporter = Reporter(self.config["paths"]["output_reports_dir"])
+        self.column_detector = ColumnDetector()
 
         self.good_threshold = self.config["quality_assessment"]["good_threshold"]
         self.medium_threshold = self.config["quality_assessment"]["medium_threshold"]
@@ -144,9 +146,16 @@ class AdaptiveOCRPipeline:
         # OCR
         ocr_result = self.ocr.detect_text(image_bytes)
 
+        # Reorder text by columns (right-to-left for Hebrew)
+        blocks = ocr_result.get("blocks", [])
+        if blocks:
+            text = self.column_detector.reorder_blocks_by_columns(blocks)
+        else:
+            text = ocr_result["text"]
+
         return {
             "page_number": page_num,
-            "text": ocr_result["text"],
+            "text": text,
             "confidence": ocr_result["confidence"],
             "quality_level": quality_level,
             "quality_score": quality_score,
