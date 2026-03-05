@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 class ColumnDetector:
     """Detects and handles multi-column layouts using word-level positioning."""
 
+    # Header detection: words taller than avg_height * this factor are "large"
+    HEADER_HEIGHT_FACTOR = 1.3
+
     def reorder_by_columns(self, words: list[dict]) -> str:
         """
         Detect columns from word positions and return text in correct reading order.
@@ -64,12 +67,32 @@ class ColumnDetector:
 
         logger.info(f"    Column detection: {len(word_info)} words, {len(lines)} lines")
 
-        # Detect column boundary using histogram
-        boundary = self._find_column_boundary(word_info, page_width, page_x_min)
+        # Detect and extract header lines by font size (before column split)
+        avg_height = self._calc_avg_height(word_info)
+        header_lines, body_lines = self._split_headers_by_font_size(lines, avg_height)
+
+        if header_lines:
+            header_texts = [h["text"] for h in header_lines]
+            logger.info(
+                f"    Headers by font size ({len(header_lines)} lines, "
+                f"avg_h={avg_height:.0f}): {header_texts}"
+            )
+
+        # Continue column detection on body lines only
+        lines = body_lines
+
+        # Detect column boundary using histogram (from body words only)
+        body_words = [w for line in body_lines for w in line]
+        if not body_words:
+            # All lines are headers
+            return "\n".join(h["text"] for h in header_lines)
+
+        boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
         if boundary is None:
             logger.info("    Columns detected: 1")
-            return self._lines_to_text(lines)
+            body_text = self._lines_to_text(lines)
+            return self._prepend_headers(header_lines, body_text)
 
         logger.info(f"    Column boundary at x={boundary:.0f}")
 
@@ -159,7 +182,63 @@ class ColumnDetector:
             )
             parts.append(mid_text)
 
-        return "\n\n".join(parts)
+        body_text = "\n\n".join(parts)
+        return self._prepend_headers(header_lines, body_text)
+
+    def _calc_avg_height(self, word_info: list[dict]) -> float:
+        """Calculate average word height (proxy for body text font size)."""
+        heights = sorted(w["height"] for w in word_info if w["height"] > 5)
+        if not heights:
+            return 30.0
+        # Use median-area heights (drop top/bottom 10%) for robust average
+        trim = max(1, len(heights) // 10)
+        trimmed = heights[trim:-trim] if len(heights) > 20 else heights
+        return sum(trimmed) / len(trimmed)
+
+    def _split_headers_by_font_size(
+        self, lines: list[list[dict]], avg_height: float
+    ) -> tuple[list[dict], list[list[dict]]]:
+        """
+        Split lines into header lines and body lines based on font size.
+
+        A line is a header if most of its words are significantly taller
+        than the average word height (large font = header).
+
+        Returns:
+            (header_lines, body_lines) where header_lines is a list of
+            dicts with 'text' and 'y' keys, body_lines is the remaining lines.
+        """
+        threshold = avg_height * self.HEADER_HEIGHT_FACTOR
+        header_lines = []
+        body_lines = []
+
+        for line in lines:
+            # Count how many words in this line have "large" height
+            large_words = [w for w in line if w["height"] >= threshold]
+            large_ratio = len(large_words) / len(line) if line else 0
+
+            if large_ratio >= 0.6:
+                # Most words are large -> this is a header line
+                sorted_line = sorted(line, key=lambda w: -w["x_center"])  # RTL
+                text = " ".join(w["text"] for w in sorted_line)
+                y = sum(w["y_center"] for w in line) / len(line)
+                avg_h = sum(w["height"] for w in line) / len(line)
+                header_lines.append({"text": text, "y": y, "avg_height": avg_h})
+            else:
+                body_lines.append(line)
+
+        # Sort headers by y position (top to bottom)
+        header_lines.sort(key=lambda h: h["y"])
+        return header_lines, body_lines
+
+    def _prepend_headers(self, header_lines: list[dict], body_text: str) -> str:
+        """Prepend extracted header lines before the body text."""
+        if not header_lines:
+            return body_text
+        header_text = "\n".join(h["text"] for h in header_lines)
+        if not body_text:
+            return header_text
+        return header_text + "\n\n" + body_text
 
     def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
         """Group words into text lines based on y-proximity."""
