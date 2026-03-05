@@ -1,0 +1,36 @@
+# Data files
+data/input/*.pdf
+data/output/
+data/cache/
+data/dictionaries/*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Google Cloud credentials
+*.json
+!config.yaml
+
+# Database
+*.db

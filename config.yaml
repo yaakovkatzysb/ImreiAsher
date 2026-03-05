@@ -1,0 +1,45 @@
+# OCR Pipeline Configuration
+# ==========================
+
+# Google Cloud Vision
+google_vision:
+  credentials_path: ""  # path to service account JSON file
+  max_retries: 3
+  timeout: 60  # seconds per request
+
+# Input/Output paths
+paths:
+  input_dir: "data/input"
+  output_txt_dir: "data/output/txt"
+  output_json_dir: "data/output/json"
+  output_reports_dir: "data/output/reports"
+  database_path: "data/output/database.db"
+  dictionary_path: "data/dictionaries/hebrew_words.txt"
+  cache_dir: "data/cache"
+
+# Processing
+processing:
+  parallel_workers: 3
+  dpi: 300  # resolution for PDF to image conversion
+  confidence_threshold: 0.80  # below this, apply pre-processing
+
+# Quality thresholds
+quality:
+  hebrew_ratio_min: 0.85
+  weird_chars_max: 10
+  chars_per_page_min: 500
+  chars_per_page_max: 5000
+
+# Pre-processing (for poor quality files)
+preprocessing:
+  denoise: true
+  binarize: true
+  deskew: true
+  enhance_contrast: true  # CLAHE
+  upscale_factor: 2  # for low resolution images
+
+# Quality assessment thresholds (for adaptive pipeline)
+quality_assessment:
+  good_threshold: 0.90   # above = good quality, skip pre-processing
+  medium_threshold: 0.75  # above = medium, light pre-processing
+  # below medium = poor quality, full pre-processing

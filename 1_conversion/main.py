@@ -1,0 +1,259 @@
+"""
+Main OCR Pipeline - Adaptive processing for Hebrew historical newspapers.
+
+Usage:
+    python main.py                    # Process all PDFs in input dir
+    python main.py --file path.pdf    # Process a single file
+    python main.py --pilot 5          # Process first 5 files only
+    python main.py --reprocess        # Force reprocess (ignore cache)
+"""
+
+import argparse
+import logging
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import yaml
+
+from database import Database
+from dictionary_checker import HebrewDictionaryChecker
+from file_manager import FileManager
+from google_vision import GoogleVisionOCR
+from preprocessor import ImagePreprocessor
+from quality_checker import QualityChecker
+from reporter import Reporter
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("ocr_pipeline.log", encoding="utf-8"),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+
+class AdaptiveOCRPipeline:
+    """Main pipeline that processes PDFs through OCR with adaptive quality handling."""
+
+    def __init__(self, config_path: str = "config.yaml"):
+        with open(config_path, "r", encoding="utf-8") as f:
+            self.config = yaml.safe_load(f)
+
+        self.ocr = GoogleVisionOCR(
+            credentials_path=self.config["google_vision"]["credentials_path"],
+            cache_dir=self.config["paths"]["cache_dir"],
+        )
+        self.preprocessor = ImagePreprocessor(self.config["preprocessing"])
+        self.file_manager = FileManager(self.config)
+        self.quality_checker = QualityChecker(self.config["quality"])
+        self.dictionary_checker = HebrewDictionaryChecker(
+            self.config["paths"]["dictionary_path"]
+        )
+        self.database = Database(self.config["paths"]["database_path"])
+        self.reporter = Reporter(self.config["paths"]["output_reports_dir"])
+
+        self.good_threshold = self.config["quality_assessment"]["good_threshold"]
+        self.medium_threshold = self.config["quality_assessment"]["medium_threshold"]
+
+    def process_single(self, pdf_path: Path, force: bool = False) -> dict:
+        """
+        Process a single PDF file through the adaptive pipeline.
+
+        Args:
+            pdf_path: Path to PDF file
+            force: If True, reprocess even if already done
+
+        Returns:
+            Result dict with text, confidence, quality report
+        """
+        filename = pdf_path.name
+        logger.info(f"Processing: {filename}")
+
+        # Check if already processed
+        if not force and self.file_manager.is_already_processed(filename):
+            logger.info(f"  Skipping (already processed): {filename}")
+            return None
+
+        start_time = time.time()
+
+        try:
+            # Step 1: Convert PDF to images
+            images = self.file_manager.pdf_to_images(
+                pdf_path, dpi=self.config["processing"]["dpi"]
+            )
+            logger.info(f"  Converted {len(images)} pages to images")
+
+            # Step 2: Process each page
+            pages_data = []
+            for i, image_bytes in enumerate(images):
+                page_result = self._process_page(image_bytes, i + 1)
+                pages_data.append(page_result)
+
+            # Step 3: Quality checks on combined text
+            full_text = "\n".join(p["text"] for p in pages_data if p.get("text"))
+            quality_report = self.quality_checker.check_all(full_text, len(images))
+
+            # Step 4: Dictionary check (if dictionary available)
+            if self.dictionary_checker.has_dictionary():
+                dict_report = self.dictionary_checker.check_text(full_text)
+                quality_report["dictionary"] = dict_report
+
+            # Step 5: Build and save result
+            result = self.file_manager.build_result(pdf_path, pages_data, quality_report)
+
+            elapsed = time.time() - start_time
+            result["processing_time_seconds"] = round(elapsed, 2)
+
+            # Save outputs
+            self.file_manager.save_txt(filename, result["text"])
+            self.file_manager.save_json(filename, result)
+            self.database.insert_document(result)
+            self.reporter.save_file_report(result)
+
+            score = quality_report.get("score", 0)
+            logger.info(
+                f"  Done: {filename} | conf={result['confidence']:.2%} | "
+                f"score={score}/100 | {elapsed:.1f}s"
+            )
+            return result
+
+        except Exception as e:
+            logger.error(f"  FAILED: {filename} - {e}")
+            return {
+                "filename": filename,
+                "error": str(e),
+                "confidence": 0,
+                "quality_report": {"score": 0, "recommendation": "failed"},
+            }
+
+    def _process_page(self, image_bytes: bytes, page_num: int) -> dict:
+        """Process a single page image through OCR with adaptive pre-processing."""
+        # Assess quality
+        quality_level, quality_score = self.preprocessor.assess_quality(image_bytes)
+        logger.info(f"    Page {page_num}: quality={quality_level} ({quality_score:.2f})")
+
+        # Pre-process if needed
+        if quality_level != "good":
+            image_bytes = self.preprocessor.process(image_bytes, quality_level)
+            logger.info(f"    Page {page_num}: pre-processing applied ({quality_level})")
+
+        # OCR
+        ocr_result = self.ocr.detect_text(image_bytes)
+
+        return {
+            "page_number": page_num,
+            "text": ocr_result["text"],
+            "confidence": ocr_result["confidence"],
+            "quality_level": quality_level,
+            "quality_score": quality_score,
+            "languages": ocr_result.get("languages", []),
+        }
+
+    def process_all(self, limit: int = 0, force: bool = False) -> list[dict]:
+        """
+        Process all PDFs in the input directory.
+
+        Args:
+            limit: Max files to process (0 = all)
+            force: Reprocess already-processed files
+
+        Returns:
+            List of result dicts
+        """
+        pdfs = self.file_manager.get_pdf_list()
+        if not pdfs:
+            logger.warning("No PDF files found in input directory")
+            return []
+
+        if limit > 0:
+            pdfs = pdfs[:limit]
+
+        logger.info(f"Starting processing of {len(pdfs)} PDF files")
+        start_time = time.time()
+
+        results = []
+        workers = self.config["processing"]["parallel_workers"]
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(self.process_single, pdf, force): pdf
+                for pdf in pdfs
+            }
+
+            for future in as_completed(futures):
+                pdf = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    logger.error(f"Unexpected error processing {pdf.name}: {e}")
+
+        # Generate aggregate report
+        successful = [r for r in results if "error" not in r]
+        if successful:
+            self.reporter.save_aggregate_report(successful)
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Processing complete: {len(successful)}/{len(pdfs)} successful | "
+            f"Total time: {elapsed:.1f}s"
+        )
+
+        # Print summary
+        self._print_summary(results, elapsed)
+
+        return results
+
+    def _print_summary(self, results: list[dict], elapsed: float):
+        """Print processing summary to console."""
+        successful = [r for r in results if "error" not in r]
+        failed = [r for r in results if "error" in r]
+
+        print("\n" + "=" * 50)
+        print(f"  OCR Processing Complete")
+        print("=" * 50)
+        print(f"  Successful: {len(successful)}")
+        print(f"  Failed: {len(failed)}")
+        print(f"  Total time: {elapsed:.1f}s")
+
+        if successful:
+            avg_conf = sum(r["confidence"] for r in successful) / len(successful)
+            avg_score = sum(
+                r.get("quality_report", {}).get("score", 0) for r in successful
+            ) / len(successful)
+            print(f"  Avg confidence: {avg_conf:.2%}")
+            print(f"  Avg quality score: {avg_score:.0f}/100")
+
+        if failed:
+            print("\n  Failed files:")
+            for r in failed:
+                print(f"    - {r['filename']}: {r['error']}")
+
+        print("=" * 50 + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Hebrew OCR Pipeline")
+    parser.add_argument("--config", default="config.yaml", help="Path to config file")
+    parser.add_argument("--file", help="Process a single PDF file")
+    parser.add_argument("--pilot", type=int, default=0, help="Process only N files (pilot run)")
+    parser.add_argument("--reprocess", action="store_true", help="Force reprocess all files")
+    args = parser.parse_args()
+
+    pipeline = AdaptiveOCRPipeline(config_path=args.config)
+
+    if args.file:
+        result = pipeline.process_single(Path(args.file), force=args.reprocess)
+        if result:
+            print(pipeline.reporter.file_report(result))
+    else:
+        pipeline.process_all(limit=args.pilot, force=args.reprocess)
+
+
+if __name__ == "__main__":
+    main()
