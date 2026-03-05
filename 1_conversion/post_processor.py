@@ -50,10 +50,12 @@ class PostProcessor:
             logger.info(f"  Repeating headers found: {all_headers}")
 
         # Step 2: Clean each page
+        # Track font-size headers seen so far (keep first occurrence only)
+        seen_headers = set()
         for page in pages_data:
             if not page.get("text"):
                 continue
-            page["text"] = self._clean_page(page["text"], all_headers)
+            page["text"] = self._clean_page(page["text"], all_headers, seen_headers)
 
         # Step 3: Add structured header to first page
         issue_num, issue_date = self._extract_issue_info(filename)
@@ -66,8 +68,10 @@ class PostProcessor:
 
         return pages_data
 
-    def _clean_page(self, text: str, repeating_headers: list) -> str:
+    def _clean_page(self, text: str, repeating_headers: list, seen_headers: set = None) -> str:
         """Remove interstitial text and repeating headers from a single page."""
+        if seen_headers is None:
+            seen_headers = set()
         lines = text.split("\n")
         cleaned_lines = []
 
@@ -79,8 +83,13 @@ class PostProcessor:
                 cleaned_lines.append(line)
                 continue
 
-            # Skip font-size detected headers (protected from removal)
+            # Font-size detected headers: keep first occurrence, remove duplicates
             if "[כותרת]" in stripped:
+                header_text = stripped.replace("[כותרת]", "").replace("[/כותרת]", "").strip()
+                if header_text in seen_headers:
+                    logger.debug(f"  Removed duplicate font-size header: {header_text}")
+                    continue
+                seen_headers.add(header_text)
                 cleaned_lines.append(line)
                 continue
 
@@ -106,8 +115,10 @@ class PostProcessor:
             if phrase in line:
                 return True
 
-        # Generic pattern: המשך ... בעמוד
+        # Generic pattern: המשך ... בעמוד / המשך מעמ'
         if re.search(r"המשך\s+.+\s+בעמוד", line):
+            return True
+        if re.search(r"המשך\s+מעמ", line):
             return True
 
         return False

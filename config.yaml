@@ -52,6 +52,9 @@ post_processing:
     - "המשך בעמוד"
     - "המשך פנינים יקרים"
     - "המשך בעמ'"
+    - "המשך מעמ' קודם"
+    - "המשך מעמוד קודם"
+    - "המשך מעמ'"
 
   # Known repeating headers (removed from every page)
   # Auto-detection also finds headers that repeat across most pages
