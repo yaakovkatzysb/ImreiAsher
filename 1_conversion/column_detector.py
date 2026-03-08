@@ -13,19 +13,25 @@ logger = logging.getLogger(__name__)
 
 # Punctuation tokens that should not have a space before them
 _PUNCT_NO_SPACE_BEFORE = re.compile(r"^[,\.;:!?\)\]\}\"״׳']+$")
+# Opening brackets/parens - should not have a space after them
+_PUNCT_NO_SPACE_AFTER = re.compile(r"^[\(\[\{]+$")
 
 
 def _join_words(words) -> str:
-    """Join word texts, suppressing the space before punctuation-only tokens."""
+    """Join word texts, suppressing spaces around punctuation tokens."""
     parts = []
+    skip_space = False
     for w in words:
         token = w["text"] if isinstance(w, dict) else w
         if parts and _PUNCT_NO_SPACE_BEFORE.match(token):
+            parts.append(token)
+        elif skip_space:
             parts.append(token)
         else:
             if parts:
                 parts.append(" ")
             parts.append(token)
+        skip_space = bool(_PUNCT_NO_SPACE_AFTER.match(token))
     return "".join(parts)
 
 
