@@ -240,19 +240,10 @@ class HebrewDictionaryChecker:
             sym_conf = sym_conf_map.get(token) or sym_conf_map.get(clean)
             is_known = self._is_known_or_abbrev(clean, known)
 
-            # If word is known and we have no confidence data, skip it
-            if is_known and not sym_conf:
+            # If word is already known, don't try to swap its letters.
+            # Both כמש"נ and כמש"כ are valid – trust the OCR output.
+            if is_known:
                 continue
-
-            # If word is known but has confidence data, only check if any
-            # symbol has low confidence (might be a confusion error)
-            if is_known and sym_conf:
-                has_low_conf = any(
-                    s.get("confidence", 1.0) < self._LOW_CONFIDENCE_THRESHOLD
-                    for s in sym_conf
-                )
-                if not has_low_conf:
-                    continue
 
             # Try single-letter swaps
             best = self._try_confusion_swaps(clean, known, sym_conf)
