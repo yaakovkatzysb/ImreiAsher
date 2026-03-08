@@ -167,14 +167,31 @@ class HebrewDictionaryChecker:
             return (word, best_match, round(confidence, 2))
         return None
 
-    def fix_confused_letters(self, text: str) -> str:
+    def fix_confused_letters(self, text: str, words_data: list[dict] = None) -> str:
         """Try to fix OCR confusion between visually similar Hebrew letters.
 
         For each word that is NOT in the dictionary/abbreviation set, try
         swapping each letter with its visual confusion partners. If exactly
         one swap produces a known word, apply it.
+
+        When symbol_confidences are available (from words_data), also fixes
+        ambiguous cases by preferring alternatives where the swapped letter
+        had low OCR confidence.
+
+        Args:
+            text: The text to fix.
+            words_data: Optional list of word dicts with 'text' and
+                'symbol_confidences' keys (from Google Vision).
         """
         known = self.words | _BUILTIN_ABBREVIATIONS
+
+        # Build a lookup from word text to symbol confidences
+        sym_conf_map = {}
+        if words_data:
+            for w in words_data:
+                sc = w.get("symbol_confidences")
+                if sc and w.get("text"):
+                    sym_conf_map[w["text"]] = sc
 
         # Split preserving non-word separators
         tokens = re.split(r'(\s+)', text)
@@ -184,13 +201,26 @@ class HebrewDictionaryChecker:
             if not token or token.isspace():
                 continue
 
-            # Check if already known (strip quotes for abbreviation matching)
             clean = token.strip("'׳")
-            if self._is_known_or_abbrev(clean, known):
+            sym_conf = sym_conf_map.get(token) or sym_conf_map.get(clean)
+            is_known = self._is_known_or_abbrev(clean, known)
+
+            # If word is known and we have no confidence data, skip it
+            if is_known and not sym_conf:
                 continue
 
+            # If word is known but has confidence data, only check if any
+            # symbol has low confidence (might be a confusion error)
+            if is_known and sym_conf:
+                has_low_conf = any(
+                    s.get("confidence", 1.0) < self._LOW_CONFIDENCE_THRESHOLD
+                    for s in sym_conf
+                )
+                if not has_low_conf:
+                    continue
+
             # Try single-letter swaps
-            best = self._try_confusion_swaps(clean, known)
+            best = self._try_confusion_swaps(clean, known, sym_conf)
             if best and best != clean:
                 # Preserve any stripped characters
                 prefix = token[:len(token) - len(token.lstrip("'׳"))]
@@ -209,19 +239,50 @@ class HebrewDictionaryChecker:
             return True
         return False
 
-    def _try_confusion_swaps(self, word: str, known: set) -> str | None:
-        """Try swapping each letter with confusion partners, return match or None."""
+    # Below this confidence, a symbol is considered uncertain
+    _LOW_CONFIDENCE_THRESHOLD = 0.85
+
+    def _try_confusion_swaps(
+        self, word: str, known: set, sym_conf: list[dict] = None
+    ) -> str | None:
+        """Try swapping each letter with confusion partners, return match or None.
+
+        When sym_conf is provided and multiple candidates exist, uses
+        per-symbol confidence to pick the best one: prefer the candidate
+        where the swapped position had the lowest OCR confidence.
+        """
         candidates = []
         for pos, ch in enumerate(word):
             alternatives = _CONFUSION_MAP.get(ch, [])
             for alt in alternatives:
                 candidate = word[:pos] + alt + word[pos + 1:]
                 if candidate in known or self._is_known(candidate):
-                    candidates.append(candidate)
+                    candidates.append((candidate, pos))
 
-        # Only auto-correct if exactly one candidate is found (unambiguous)
+        if not candidates:
+            return None
+
+        # Unambiguous: exactly one candidate
         if len(candidates) == 1:
-            return candidates[0]
+            return candidates[0][0]
+
+        # Ambiguous: multiple candidates. Use symbol confidence to pick.
+        if not sym_conf:
+            return None
+
+        # Find the candidate whose swapped position has the lowest confidence
+        best_candidate = None
+        lowest_conf = 1.0
+        for candidate, pos in candidates:
+            if pos < len(sym_conf):
+                conf = sym_conf[pos].get("confidence", 1.0)
+                if conf < lowest_conf:
+                    lowest_conf = conf
+                    best_candidate = candidate
+
+        # Only correct if the symbol's confidence is genuinely low
+        if best_candidate and lowest_conf < self._LOW_CONFIDENCE_THRESHOLD:
+            return best_candidate
         return None
 
     def _levenshtein(self, s1: str, s2: str) -> int:

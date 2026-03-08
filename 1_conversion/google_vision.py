@@ -97,10 +97,16 @@ class GoogleVisionOCR:
                     for word in paragraph.words:
                         word_text = self._build_word_text(word.symbols)
                         if word_text.strip():
+                            # Per-symbol confidence for confusion correction
+                            sym_conf = [
+                                {"char": s.text, "confidence": s.confidence}
+                                for s in word.symbols
+                            ]
                             words.append({
                                 "text": word_text,
                                 "confidence": word.confidence,
                                 "bbox": self._extract_bbox(word.bounding_box),
+                                "symbol_confidences": sym_conf,
                             })
 
         # Post-process: detach trailing quotes that belong to the next word
