@@ -66,6 +66,12 @@ post_processing:
   # Minimum ratio of pages a line must appear on to be considered a header
   header_min_page_ratio: 0.5
 
+  # Manual word corrections (wrong → right)
+  # Add your corrections here as you find OCR errors.
+  # Example: if OCR writes כמש"נ but the original says כמש"כ, add:
+  #   כמש"נ: כמש"כ
+  corrections: {}
+
   # Document header template (inserted at beginning of output)
   # {issue_number} and {issue_date} are replaced from filename
   header_template: |

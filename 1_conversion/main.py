@@ -146,14 +146,13 @@ class AdaptiveOCRPipeline:
                         .replace("[כותרת]", "")
                         .replace("[/כותרת]", ""))
 
-            # Step 3c: Fix visually confused Hebrew letters (כ↔נ, ד↔ר, etc.)
-            # Pass per-symbol confidence data for ambiguous correction
-            for page in pages_data:
-                if page.get("text"):
-                    page["text"] = self.dictionary_checker.fix_confused_letters(
-                        page["text"],
-                        words_data=page.get("words_data"),
-                    )
+            # Step 3c: Apply manual corrections from corrections file
+            corrections = self.config.get("post_processing", {}).get("corrections", {})
+            if corrections:
+                for page in pages_data:
+                    if page.get("text"):
+                        for wrong, right in corrections.items():
+                            page["text"] = page["text"].replace(wrong, right)
 
             logger.info(f"  עיבוד-אחר הושלם")
 
