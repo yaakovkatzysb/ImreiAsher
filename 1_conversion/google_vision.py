@@ -50,7 +50,11 @@ class GoogleVisionOCR:
         cache_key = self._get_cache_key(image_bytes)
         cached = self._load_from_cache(cache_key)
         if cached and "words" in cached:
-            return cached
+            # Check if cache has per-symbol confidence data (new format).
+            # Old cache entries lack this, so re-run OCR to get full data.
+            words = cached["words"]
+            if words and "symbol_confidences" in words[0]:
+                return cached
 
         image = vision.Image(content=image_bytes)
         response = self.client.document_text_detection(
