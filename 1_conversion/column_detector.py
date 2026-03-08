@@ -83,7 +83,7 @@ class ColumnDetector:
         # Group words into text lines
         lines = self._group_into_lines(word_info)
 
-        logger.info(f"    Column detection: {len(word_info)} words, {len(lines)} lines")
+        logger.info(f"    זיהוי עמודות: {len(word_info)} מילים, {len(lines)} שורות")
 
         # Detect and extract header lines by font size (before column split)
         avg_height = self._calc_avg_height(word_info)
@@ -92,8 +92,8 @@ class ColumnDetector:
         if header_lines:
             header_texts = [h["text"] for h in header_lines]
             logger.info(
-                f"    Headers by font size ({len(header_lines)} lines, "
-                f"avg_h={avg_height:.0f}): {header_texts}"
+                f"    כותרות לפי גודל פונט ({len(header_lines)} שורות, "
+                f"גובה_ממוצע={avg_height:.0f}): {header_texts}"
             )
 
         # Continue column detection on body lines only
@@ -108,11 +108,11 @@ class ColumnDetector:
         boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
         if boundary is None:
-            logger.info("    Columns detected: 1")
+            logger.info("    עמודות שזוהו: 1")
             body_text = self._lines_to_text(lines)
             return self._prepend_headers(header_lines, body_text)
 
-        logger.info(f"    Column boundary at x={boundary:.0f}")
+        logger.info(f"    גבול עמודה ב-x={boundary:.0f}")
 
         # Calculate typical column line word count for comparison
         page_center = (page_x_min + page_x_max) / 2
@@ -149,9 +149,9 @@ class ColumnDetector:
         spanning_lines.sort(key=lambda x: x[0])
 
         logger.info(
-            f"    Columns detected: 2 "
-            f"(right: {len(right_col_lines)} lines, left: {len(left_col_lines)} lines, "
-            f"spanning: {len(spanning_lines)} lines)"
+            f"    עמודות שזוהו: 2 "
+            f"(ימין: {len(right_col_lines)} שורות, שמאל: {len(left_col_lines)} שורות, "
+            f"חוצות: {len(spanning_lines)} שורות)"
         )
 
         # Build text: spanning lines at top, then right column, then left
@@ -323,8 +323,8 @@ class ColumnDetector:
         avg_per_bin = total_words / num_bins if num_bins > 0 else 0
 
         logger.info(
-            f"    Histogram: gutter bin {min_idx} has {min_count} words "
-            f"(avg {avg_per_bin:.1f}/bin, threshold {max(1, avg_per_bin * 0.15):.1f})"
+            f"    היסטוגרמה: תא מרזב {min_idx} מכיל {min_count} מילים "
+            f"(ממוצע {avg_per_bin:.1f}/תא, סף {max(1, avg_per_bin * 0.15):.1f})"
         )
 
         if min_count <= max(1, avg_per_bin * 0.15):
@@ -361,8 +361,8 @@ class ColumnDetector:
         # Short line near center -> header
         if width_ratio < 0.4 and center_offset < 0.15:
             logger.info(
-                f"    Centered header line detected: '{' '.join(w['text'] for w in line)}' "
-                f"(width={width_ratio:.0%}, offset={center_offset:.0%})"
+                f"    זוהתה שורת כותרת ממורכזת: '{' '.join(w['text'] for w in line)}' "
+                f"(רוחב={width_ratio:.0%}, היסט={center_offset:.0%})"
             )
             return True
 
