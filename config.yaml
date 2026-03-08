@@ -68,8 +68,6 @@ post_processing:
 
   # Manual word corrections (wrong → right)
   # Add your corrections here as you find OCR errors.
-  # Example: if OCR writes כמש"נ but the original says כמש"כ, add:
-  #   כמש"נ: כמש"כ
   corrections: {}
 
   # Document header template (inserted at beginning of output)
