@@ -95,9 +95,7 @@ class GoogleVisionOCR:
             for block in page.blocks:
                 for paragraph in block.paragraphs:
                     for word in paragraph.words:
-                        word_text = "".join(
-                            symbol.text for symbol in word.symbols
-                        )
+                        word_text = self._build_word_text(word.symbols)
                         if word_text.strip():
                             words.append({
                                 "text": word_text,
@@ -111,6 +109,42 @@ class GoogleVisionOCR:
             "languages": sorted(languages),
             "words": words,
         }
+
+    # Yod is often misread by OCR when the actual glyph is a geresh (׳).
+    # A geresh is much smaller than a regular letter, so we detect this by
+    # comparing the last symbol's height to the rest of the word.
+    _GERESH_HEIGHT_RATIO = 0.6  # last symbol must be shorter than this ratio of avg
+
+    def _build_word_text(self, symbols) -> str:
+        """Build word text from symbols, fixing yod-that-is-actually-geresh."""
+        if len(symbols) < 2:
+            return "".join(s.text for s in symbols)
+
+        last = symbols[-1]
+        if last.text != "י":
+            return "".join(s.text for s in symbols)
+
+        # Compare last symbol height to the average of the others
+        def _sym_height(sym):
+            if not sym.bounding_box or not sym.bounding_box.vertices:
+                return None
+            ys = [v.y for v in sym.bounding_box.vertices]
+            return max(ys) - min(ys)
+
+        last_h = _sym_height(last)
+        if last_h is None:
+            return "".join(s.text for s in symbols)
+
+        other_heights = [_sym_height(s) for s in symbols[:-1]]
+        other_heights = [h for h in other_heights if h is not None and h > 0]
+        if not other_heights:
+            return "".join(s.text for s in symbols)
+
+        avg_h = sum(other_heights) / len(other_heights)
+        if avg_h > 0 and last_h / avg_h < self._GERESH_HEIGHT_RATIO:
+            return "".join(s.text for s in symbols[:-1]) + "'"
+
+        return "".join(s.text for s in symbols)
 
     def _extract_bbox(self, bounding_box) -> list:
         """Extract bounding box as list of [x, y] points."""
