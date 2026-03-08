@@ -126,14 +126,6 @@ class ColumnDetector:
             right_words = [w for w in line if w["x_center"] > boundary]
             left_words = [w for w in line if w["x_center"] <= boundary]
 
-            # Check if this line spans both columns (e.g. a header)
-            if right_words and left_words:
-                if self._is_spanning_line(line, boundary):
-                    line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
-                    y = sum(w["y_center"] for w in line) / len(line)
-                    spanning_lines.append((y, line_sorted))
-                    continue
-
             # Check if this is a short centered line (header fragment)
             if self._is_centered_line(line, boundary, page_center, page_width):
                 line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
@@ -375,49 +367,6 @@ class ColumnDetector:
             return True
 
         return False
-
-    def _is_spanning_line(self, line: list[dict], boundary: float) -> bool:
-        """
-        Check if a line spans across the column boundary continuously,
-        indicating it's a header or full-width line rather than two column segments.
-
-        Looks at word gaps: if there's no unusually large gap near the boundary,
-        the line is spanning (not split into columns).
-        """
-        if len(line) <= 1:
-            return False
-
-        # Sort words by x position (left to right)
-        sorted_words = sorted(line, key=lambda w: w["x_min"])
-
-        # Calculate gaps between consecutive words
-        gaps = []
-        for i in range(len(sorted_words) - 1):
-            gap = sorted_words[i + 1]["x_min"] - sorted_words[i]["x_max"]
-            gaps.append((gap, sorted_words[i]["x_max"], sorted_words[i + 1]["x_min"]))
-
-        if not gaps:
-            return False
-
-        # Find the gap closest to the boundary
-        boundary_gap = None
-        other_gaps = []
-        for gap_size, left_edge, right_edge in gaps:
-            if left_edge <= boundary <= right_edge or abs((left_edge + right_edge) / 2 - boundary) < abs(gap_size) + 50:
-                boundary_gap = gap_size
-            else:
-                other_gaps.append(gap_size)
-
-        if boundary_gap is None:
-            return True  # No gap near boundary -> spanning
-
-        # If the gap at the boundary is not much larger than typical word gaps,
-        # this is a spanning line
-        avg_gap = sum(g for g in other_gaps) / len(other_gaps) if other_gaps else 0
-        max_other_gap = max(other_gaps) if other_gaps else 0
-
-        # Spanning if boundary gap is less than 3x the average gap or similar to max gap
-        return boundary_gap < max(avg_gap * 3, max_other_gap * 1.5, 80)
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
         """Convert lines of words to text (single column)."""
