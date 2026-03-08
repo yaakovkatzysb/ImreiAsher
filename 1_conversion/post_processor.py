@@ -47,7 +47,7 @@ class PostProcessor:
         auto_headers = self._detect_repeating_headers(pages_data)
         all_headers = auto_headers + self.repeating_headers
         if all_headers:
-            logger.info(f"  Repeating headers found: {all_headers}")
+            logger.info(f"  כותרות חוזרות שנמצאו: {all_headers}")
 
         # Step 2: Clean each page
         # Track font-size headers seen so far (keep first occurrence only)
@@ -87,7 +87,7 @@ class PostProcessor:
             if "[כותרת]" in stripped:
                 header_text = stripped.replace("[כותרת]", "").replace("[/כותרת]", "").strip()
                 if header_text in seen_headers:
-                    logger.debug(f"  Removed duplicate font-size header: {header_text}")
+                    logger.debug(f"  הוסרה כותרת כפולה לפי גודל פונט: {header_text}")
                     continue
                 seen_headers.add(header_text)
                 cleaned_lines.append(line)
@@ -95,18 +95,22 @@ class PostProcessor:
 
             # Check interstitial phrases
             if self._is_interstitial(stripped):
-                logger.debug(f"  Removed interstitial: {stripped}")
+                logger.debug(f"  הוסר טקסט ביניים: {stripped}")
                 continue
 
             # Check repeating headers
             if self._is_repeating_header(stripped, repeating_headers):
-                logger.debug(f"  Removed repeating header: {stripped}")
+                logger.debug(f"  הוסרה כותרת חוזרת: {stripped}")
                 continue
 
             cleaned_lines.append(line)
 
         # Remove leading/trailing blank lines
         result = "\n".join(cleaned_lines).strip()
+
+        # Fix duplicate punctuation from OCR (e.g. ",," -> ",")
+        result = re.sub(r"([,\.;:!?])\1+", r"\1", result)
+
         return result
 
     def _is_interstitial(self, line: str) -> bool:
