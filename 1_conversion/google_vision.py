@@ -103,6 +103,9 @@ class GoogleVisionOCR:
                                 "bbox": self._extract_bbox(word.bounding_box),
                             })
 
+        # Post-process: detach trailing quotes that belong to the next word
+        self._detach_trailing_quotes(words)
+
         return {
             "text": annotation.text,
             "confidence": round(avg_confidence, 4),
@@ -114,6 +117,27 @@ class GoogleVisionOCR:
     # A geresh is much smaller than a regular letter, so we detect this by
     # comparing the last symbol's height to the rest of the word.
     _GERESH_HEIGHT_RATIO = 0.6  # last symbol must be shorter than this ratio of avg
+
+    _QUOTE_CHARS = set('"״""')
+
+    def _detach_trailing_quotes(self, words: list[dict]):
+        """Move trailing quote marks to the next word when they are opening quotes.
+
+        If a word already contains an internal quote (abbreviation mark like כמש"כ)
+        and ends with another quote, the trailing quote is likely the opening mark
+        of the following quoted text and should attach to the next word.
+        """
+        i = 0
+        while i < len(words) - 1:
+            text = words[i]["text"]
+            if len(text) > 2 and text[-1] in self._QUOTE_CHARS:
+                # Check if there's already a quote inside the word (not at edges)
+                inner = text[1:-1]
+                if any(c in self._QUOTE_CHARS for c in inner):
+                    # Detach the trailing quote
+                    words[i]["text"] = text[:-1]
+                    words[i + 1]["text"] = text[-1] + words[i + 1]["text"]
+            i += 1
 
     def _build_word_text(self, symbols) -> str:
         """Build word text from symbols, fixing yod-that-is-actually-geresh."""

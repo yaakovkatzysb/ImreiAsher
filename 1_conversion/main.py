@@ -146,6 +146,13 @@ class AdaptiveOCRPipeline:
                         .replace("[כותרת]", "")
                         .replace("[/כותרת]", ""))
 
+            # Step 3c: Fix visually confused Hebrew letters (כ↔נ, ד↔ר, etc.)
+            for page in pages_data:
+                if page.get("text"):
+                    page["text"] = self.dictionary_checker.fix_confused_letters(
+                        page["text"]
+                    )
+
             logger.info(f"  עיבוד-אחר הושלם")
 
             # Step 4: Quality checks on combined text
