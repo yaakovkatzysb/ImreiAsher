@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
+from bidi.algorithm import get_display
 
 from column_detector import ColumnDetector
 from database import Database
@@ -27,13 +28,25 @@ from quality_checker import QualityChecker
 from post_processor import PostProcessor
 from reporter import Reporter
 
+
+class BidiFormatter(logging.Formatter):
+    """Logging formatter that applies BiDi algorithm for correct Hebrew display in terminals."""
+
+    def format(self, record):
+        result = super().format(record)
+        return get_display(result)
+
+
+# Console handler with BiDi support, file handler without (file is already correct)
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(BidiFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+
+_file_handler = logging.FileHandler("ocr_pipeline.log", encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("ocr_pipeline.log", encoding="utf-8"),
-    ],
+    handlers=[_console_handler, _file_handler],
 )
 logger = logging.getLogger(__name__)
 
@@ -263,27 +276,29 @@ class AdaptiveOCRPipeline:
         successful = [r for r in results if "error" not in r]
         failed = [r for r in results if "error" in r]
 
-        print("\n" + "=" * 50)
-        print(f"  עיבוד OCR הושלם")
-        print("=" * 50)
-        print(f"  הצליחו: {len(successful)}")
-        print(f"  נכשלו: {len(failed)}")
-        print(f"  זמן כולל: {elapsed:.1f}ש")
+        _bprint = lambda s: print(get_display(s))
+
+        _bprint("\n" + "=" * 50)
+        _bprint(f"  עיבוד OCR הושלם")
+        _bprint("=" * 50)
+        _bprint(f"  הצליחו: {len(successful)}")
+        _bprint(f"  נכשלו: {len(failed)}")
+        _bprint(f"  זמן כולל: {elapsed:.1f}ש")
 
         if successful:
             avg_conf = sum(r["confidence"] for r in successful) / len(successful)
             avg_score = sum(
                 r.get("quality_report", {}).get("score", 0) for r in successful
             ) / len(successful)
-            print(f"  ביטחון ממוצע: {avg_conf:.2%}")
-            print(f"  ציון איכות ממוצע: {avg_score:.0f}/100")
+            _bprint(f"  ביטחון ממוצע: {avg_conf:.2%}")
+            _bprint(f"  ציון איכות ממוצע: {avg_score:.0f}/100")
 
         if failed:
-            print("\n  קבצים שנכשלו:")
+            _bprint("\n  קבצים שנכשלו:")
             for r in failed:
-                print(f"    - {r['filename']}: {r['error']}")
+                _bprint(f"    - {r['filename']}: {r['error']}")
 
-        print("=" * 50 + "\n")
+        _bprint("=" * 50 + "\n")
 
 
 def main():
