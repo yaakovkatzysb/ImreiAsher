@@ -108,8 +108,8 @@ class PostProcessor:
         # Remove leading/trailing blank lines
         result = "\n".join(cleaned_lines).strip()
 
-        # Fix duplicate punctuation from OCR (e.g. ",," -> ",")
-        result = re.sub(r"([,\.;:!?])\1+", r"\1", result)
+        # Fix duplicate punctuation from OCR (e.g. ",," -> ",", "--" -> "-")
+        result = re.sub(r"([,\.;:!?\-])\1+", r"\1", result)
 
         return result
 
