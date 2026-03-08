@@ -131,22 +131,38 @@ class GoogleVisionOCR:
     _QUOTE_CHARS = set('"״""')
 
     def _detach_trailing_quotes(self, words: list[dict]):
-        """Move trailing quote marks to the next word when they are opening quotes.
+        """Move quote marks to the correct word when they are opening quotes.
 
-        If a word already contains an internal quote (abbreviation mark like כמש"כ)
-        and ends with another quote, the trailing quote is likely the opening mark
-        of the following quoted text and should attach to the next word.
+        Handles two cases:
+        1. Trailing quote embedded in a word: כמש"כ" → כמש"כ + "next
+        2. Standalone quote word after an abbreviation: כמש"כ, ", next → כמש"כ, "next
         """
         i = 0
         while i < len(words) - 1:
             text = words[i]["text"]
+
+            # Case 1: word ends with a quote and already has an internal quote
             if len(text) > 2 and text[-1] in self._QUOTE_CHARS:
-                # Check if there's already a quote inside the word (not at edges)
                 inner = text[1:-1]
                 if any(c in self._QUOTE_CHARS for c in inner):
-                    # Detach the trailing quote
                     words[i]["text"] = text[:-1]
                     words[i + 1]["text"] = text[-1] + words[i + 1]["text"]
+                    i += 1
+                    continue
+
+            # Case 2: standalone quote word after an abbreviation (word with internal quote)
+            # → it's an opening quote, attach to the next word
+            if text in self._QUOTE_CHARS and i > 0 and i + 1 < len(words):
+                prev = words[i - 1]["text"]
+                has_internal_quote = (
+                    len(prev) > 2
+                    and any(c in self._QUOTE_CHARS for c in prev[1:-1])
+                )
+                if has_internal_quote:
+                    words[i + 1]["text"] = text + words[i + 1]["text"]
+                    words.pop(i)
+                    continue
+
             i += 1
 
     def _build_word_text(self, symbols) -> str:
