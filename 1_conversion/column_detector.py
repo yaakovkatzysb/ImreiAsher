@@ -265,28 +265,32 @@ class ColumnDetector:
         return header_text + "\n\n" + body_text
 
     def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
-        """Group words into text lines based on y-proximity."""
+        """Group words into text lines based on y-proximity.
+
+        Uses a fixed reference y (the first word in each line) rather than
+        a running average, so that edge words on a slightly curved scan
+        line are not split off into a separate line.
+        """
         # Estimate line height
         heights = [w["height"] for w in word_info if w["height"] > 5]
         avg_height = sum(heights) / len(heights) if heights else 30
-        threshold = avg_height * 0.5
+        threshold = avg_height * 0.7
 
         # Sort by y_center
         sorted_words = sorted(word_info, key=lambda w: w["y_center"])
 
         lines = []
         current_line = [sorted_words[0]]
-        line_y = sorted_words[0]["y_center"]
+        line_y_anchor = sorted_words[0]["y_center"]
 
         for w in sorted_words[1:]:
-            if abs(w["y_center"] - line_y) <= threshold:
+            if abs(w["y_center"] - line_y_anchor) <= threshold:
                 current_line.append(w)
-                line_y = sum(ww["y_center"] for ww in current_line) / len(current_line)
             else:
                 current_line.sort(key=lambda w: -w["x_center"])  # RTL
                 lines.append(current_line)
                 current_line = [w]
-                line_y = w["y_center"]
+                line_y_anchor = w["y_center"]
 
         current_line.sort(key=lambda w: -w["x_center"])
         lines.append(current_line)
