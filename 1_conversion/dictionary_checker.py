@@ -202,6 +202,69 @@ class HebrewDictionaryChecker:
             return (word, best_match, round(confidence, 2))
         return None
 
+    # Above this confidence, OCR is trusted and the word is not flagged
+    _HIGH_CONFIDENCE_THRESHOLD = 0.95
+
+    def flag_ambiguous_words(self, text: str, words_data: list[dict] = None) -> str:
+        """Flag words where a confusion swap also produces a valid word.
+
+        Wraps ambiguous words with ⚠️ markers so a human can review them.
+        Example: כמש"כ → ⚠️כמש"כ⚠️  (because כמש"נ is also valid)
+
+        Args:
+            text: The text to scan.
+            words_data: Optional list of word dicts with 'text' and
+                'symbol_confidences' keys (from Google Vision).
+
+        Returns:
+            Text with ⚠️ markers around ambiguous words.
+        """
+        known = self.words | _BUILTIN_ABBREVIATIONS
+
+        # Build a lookup from word text to symbol confidences
+        sym_conf_map = {}
+        if words_data:
+            for w in words_data:
+                sc = w.get("symbol_confidences")
+                if sc and w.get("text"):
+                    sym_conf_map[w["text"]] = sc
+
+        tokens = re.split(r'(\s+)', text)
+        changed = False
+
+        for i, token in enumerate(tokens):
+            if not token or token.isspace():
+                continue
+
+            clean = token.strip("'׳")
+            if not self._is_known_or_abbrev(clean, known):
+                continue
+
+            sym_conf = sym_conf_map.get(token) or sym_conf_map.get(clean)
+
+            # Check if any single-letter confusion swap also produces a known word
+            has_ambiguity = False
+            for pos, ch in enumerate(clean):
+                alternatives = _CONFUSION_MAP.get(ch, [])
+                for alt in alternatives:
+                    candidate = clean[:pos] + alt + clean[pos + 1:]
+                    if candidate != clean and (candidate in known or self._is_known(candidate)):
+                        # If we have confidence data and the letter is high-confidence, skip
+                        if sym_conf and pos < len(sym_conf):
+                            conf = sym_conf[pos].get("confidence", 1.0)
+                            if conf >= self._HIGH_CONFIDENCE_THRESHOLD:
+                                continue
+                        has_ambiguity = True
+                        break
+                if has_ambiguity:
+                    break
+
+            if has_ambiguity:
+                tokens[i] = f"⚠️{token}⚠️"
+                changed = True
+
+        return "".join(tokens) if changed else text
+
     def fix_confused_letters(self, text: str, words_data: list[dict] = None) -> str:
         """Try to fix OCR confusion between visually similar Hebrew letters.
 

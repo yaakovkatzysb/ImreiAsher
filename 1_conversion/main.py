@@ -154,6 +154,14 @@ class AdaptiveOCRPipeline:
                         for wrong, right in corrections.items():
                             page["text"] = page["text"].replace(wrong, right)
 
+            # Step 3d: Flag ambiguous words (confusion swaps that produce valid alternatives)
+            if self.dictionary_checker.has_dictionary():
+                for page in pages_data:
+                    if page.get("text"):
+                        page["text"] = self.dictionary_checker.flag_ambiguous_words(
+                            page["text"], page.get("words_data")
+                        )
+
             logger.info(f"  עיבוד-אחר הושלם")
 
             # Step 4: Quality checks on combined text
