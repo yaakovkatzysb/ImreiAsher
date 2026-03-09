@@ -117,6 +117,11 @@ class ColumnDetector:
 
         logger.debug(f"  עמודות | גבול ב-x={boundary:.0f}")
 
+        # Measure the actual gutter width from lines that sit cleanly
+        # on one side of the boundary (no words crossing).
+        gutter_width = self._measure_gutter_width(lines, boundary)
+        logger.debug(f"  עמודות | רוחב מרזב={gutter_width:.0f}")
+
         # Calculate typical column line word count for comparison
         page_center = (page_x_min + page_x_max) / 2
 
@@ -137,12 +142,11 @@ class ColumnDetector:
                 continue
 
             # If a line has words on BOTH sides of the boundary, check
-            # whether there is a real gutter gap at the boundary.  In
-            # justified text the inter-word gaps are uniform, so there
-            # won't be a large gap at the boundary.  Assign the whole
-            # line to whichever column holds more of its width.
+            # whether the gap at the boundary is close to the measured
+            # gutter width.  If it's much smaller, this is justified
+            # text from one column — keep the line intact.
             if right_words and left_words:
-                if not self._has_gutter_gap(line, boundary):
+                if not self._has_gutter_gap(line, boundary, gutter_width):
                     # No real gap — keep line intact, assign to dominant side
                     line_sorted = sorted(line, key=lambda w: -w["x_center"])
                     y = sum(w["y_center"] for w in line) / len(line)
@@ -399,14 +403,45 @@ class ColumnDetector:
         return False
 
     @staticmethod
-    def _has_gutter_gap(line: list[dict], boundary: float) -> bool:
+    def _measure_gutter_width(lines: list[list[dict]], boundary: float) -> float:
+        """Measure actual gutter width from lines that sit on one side only.
+
+        For each single-column line, measure the distance from the line's
+        edge nearest the boundary to the boundary itself.  The gutter width
+        is roughly 2× the median of these distances.
+        """
+        edge_distances = []
+        for line in lines:
+            xs = [w["x_center"] for w in line]
+            all_right = all(x > boundary for x in xs)
+            all_left = all(x <= boundary for x in xs)
+
+            if all_right:
+                # Right-column line: nearest edge is the leftmost word's x_min
+                nearest = min(w["x_min"] for w in line)
+                edge_distances.append(nearest - boundary)
+            elif all_left:
+                # Left-column line: nearest edge is the rightmost word's x_max
+                nearest = max(w["x_max"] for w in line)
+                edge_distances.append(boundary - nearest)
+
+        if not edge_distances:
+            return 0.0
+
+        edge_distances.sort()
+        median_dist = edge_distances[len(edge_distances) // 2]
+        # Gutter = distance from right-col edge to boundary + boundary to left-col edge
+        # ≈ 2 × median edge distance
+        return max(median_dist * 2, 1.0)
+
+    @staticmethod
+    def _has_gutter_gap(line: list[dict], boundary: float, gutter_width: float) -> bool:
         """Check if a line has a real gutter gap at the column boundary.
 
-        Sorts words by x position and finds the gap that straddles the
-        boundary.  A real gutter is significantly wider than the normal
-        inter-word gaps in the line.
+        The gap at the boundary must be at least 50% of the measured
+        gutter width to count as a real column split.
         """
-        if len(line) < 3:
+        if len(line) < 2:
             return False
 
         # Sort words left-to-right by x_min
@@ -417,37 +452,16 @@ class ColumnDetector:
             if w["x_min"] <= boundary <= w["x_max"]:
                 return False
 
-        # Compute all inter-word gaps
-        gaps = []
-        for j in range(1, len(sorted_words)):
-            gap = sorted_words[j]["x_min"] - sorted_words[j - 1]["x_max"]
-            gaps.append((gap, j))
-
-        if not gaps:
-            return False
-
         # Find the gap that straddles the boundary
-        boundary_gap = None
-        for gap_size, j in gaps:
+        for j in range(1, len(sorted_words)):
             left_edge = sorted_words[j - 1]["x_max"]
             right_edge = sorted_words[j]["x_min"]
             if left_edge <= boundary <= right_edge:
-                boundary_gap = gap_size
-                break
+                gap = right_edge - left_edge
+                return gap >= gutter_width * 0.5
 
-        if boundary_gap is None:
-            return False
-
-        # Compare to the MAXIMUM gap in the rest of the line (not median).
-        # In justified text, the largest normal gap can be close to the
-        # boundary gap.  A real gutter must be clearly larger than ALL
-        # normal inter-word gaps.
-        other_gaps = [g for g, j2 in gaps if g != boundary_gap or j2 != j]
-        if not other_gaps:
-            return True  # only one gap and it's at the boundary
-
-        max_other_gap = max(other_gaps)
-        return boundary_gap > max_other_gap * 1.8
+        # Boundary doesn't fall between any two adjacent words
+        return False
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
         """Convert lines of words to text (single column)."""
