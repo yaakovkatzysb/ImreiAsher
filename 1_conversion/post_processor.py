@@ -112,28 +112,30 @@ class PostProcessor:
         result = re.sub(r"([,\.;:!?\-])\1+", r"\1", result)
 
         # Remove consecutive duplicate words (common OCR artifact at column boundaries)
-        result = self._remove_duplicate_words(result)
+        result = self._flag_duplicate_words(result)
 
         return result
 
     @staticmethod
-    def _remove_duplicate_words(text: str) -> str:
-        """Remove consecutive duplicate words within each line.
+    def _flag_duplicate_words(text: str) -> str:
+        """Flag consecutive duplicate words for human review.
 
-        Handles OCR artifacts where a word at a column boundary is read
-        twice, e.g. "האדם האדם" → "האדם", "בכדי בכדי" → "בכדי".
+        Wraps the duplicate with ⚠️ markers instead of removing it,
+        since the original text may legitimately repeat a word.
+        E.g. "האדם האדם" → "האדם ⚠️האדם⚠️"
         """
         lines = text.split("\n")
         for i, line in enumerate(lines):
             tokens = line.split()
             if len(tokens) < 2:
                 continue
-            deduped = [tokens[0]]
-            for tok in tokens[1:]:
-                if tok != deduped[-1]:
-                    deduped.append(tok)
-            if len(deduped) < len(tokens):
-                lines[i] = " ".join(deduped)
+            changed = False
+            for j in range(1, len(tokens)):
+                if tokens[j] == tokens[j - 1]:
+                    tokens[j] = f"⚠️{tokens[j]}⚠️"
+                    changed = True
+            if changed:
+                lines[i] = " ".join(tokens)
         return "\n".join(lines)
 
     def _is_interstitial(self, line: str) -> bool:
