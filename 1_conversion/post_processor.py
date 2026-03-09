@@ -111,7 +111,51 @@ class PostProcessor:
         # Fix duplicate punctuation from OCR (e.g. ",," -> ",", "--" -> "-")
         result = re.sub(r"([,\.;:!?\-])\1+", r"\1", result)
 
+        # Fix reversed parentheses from RTL OCR
+        result = self._fix_rtl_parentheses(result)
+
         return result
+
+    @staticmethod
+    def _fix_rtl_parentheses(text: str) -> str:
+        """Swap parentheses that Google Vision returns reversed for RTL text.
+
+        Vision sometimes returns visual parentheses instead of logical ones,
+        so ')' appears where '(' should be and vice versa.  We detect this
+        by checking if ')' precedes '(' in logical (reading) order, which
+        means they are reversed.
+        """
+        _PAIRS = {"(": ")", ")": "("}
+
+        # Collect positions of all parens
+        parens = [(m.start(), m.group()) for m in re.finditer(r"[()]", text)]
+        if len(parens) < 2:
+            return text
+
+        # Check if parens are consistently reversed: first paren should be '('
+        # If the first paren is ')' and last is '(', they're reversed
+        opens = sum(1 for _, c in parens if c == "(")
+        closes = sum(1 for _, c in parens if c == ")")
+        if opens != closes:
+            return text  # unbalanced — don't touch
+
+        # Check nesting: in correct text, running balance never goes negative
+        balance = 0
+        reversed_count = 0
+        for _, c in parens:
+            if c == "(":
+                balance += 1
+            else:
+                balance -= 1
+            if balance < 0:
+                reversed_count += 1
+                balance = 0  # reset for continued checking
+
+        if reversed_count == 0:
+            return text  # parens are already correct
+
+        # Swap all parentheses
+        return text.translate(str.maketrans("()", ")("))
 
     def _is_interstitial(self, line: str) -> bool:
         """Check if a line is an interstitial continuation marker."""
