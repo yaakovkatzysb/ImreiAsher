@@ -110,6 +110,25 @@ class ColumnDetector:
 
         boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
+        if boundary is not None:
+            # Validate: in a real two-column layout, most lines should sit
+            # on one side of the boundary.  If most lines span both sides,
+            # it's justified single-column text, not two columns.
+            split_count = 0
+            for line in lines:
+                has_right = any(w["x_center"] > boundary for w in line)
+                has_left = any(w["x_center"] <= boundary for w in line)
+                if has_right and has_left:
+                    split_count += 1
+
+            split_ratio = split_count / len(lines) if lines else 0
+            if split_ratio > 0.4:
+                logger.debug(
+                    f"  עמודות | גבול x={boundary:.0f} נדחה: "
+                    f"{split_ratio:.0%} מהשורות חוצות — כנראה justify ולא שני טורים"
+                )
+                boundary = None
+
         if boundary is None:
             logger.debug("  עמודות | תוצאה: עמודה אחת")
             body_text = self._lines_to_text(lines)
