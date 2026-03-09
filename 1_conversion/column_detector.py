@@ -126,9 +126,6 @@ class ColumnDetector:
         spanning_lines = []  # Lines that span both columns (e.g. headers)
 
         for line in lines:
-            right_words = [w for w in line if w["x_center"] > boundary]
-            left_words = [w for w in line if w["x_center"] <= boundary]
-
             # Check if this is a short centered line (header fragment)
             if self._is_centered_line(line, boundary, page_center, page_width):
                 line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
@@ -136,33 +133,34 @@ class ColumnDetector:
                 spanning_lines.append((y, line_sorted))
                 continue
 
-            # If a line has words on BOTH sides of the boundary, check
-            # whether there is a real gutter gap at the boundary.  In
-            # justified text the inter-word gaps are uniform, so there
-            # won't be a large gap at the boundary.  Assign the whole
-            # line to whichever column holds more of its width.
-            if right_words and left_words:
-                if not self._has_gutter_gap(line, boundary):
-                    # No real gap — keep line intact, assign to dominant side
-                    line_sorted = sorted(line, key=lambda w: -w["x_center"])
-                    y = sum(w["y_center"] for w in line) / len(line)
-                    right_width = sum(w["x_max"] - w["x_min"] for w in right_words)
-                    left_width = sum(w["x_max"] - w["x_min"] for w in left_words)
-                    if right_width >= left_width:
-                        right_col_lines.append((y, line_sorted))
-                    else:
-                        left_col_lines.append((y, line_sorted))
-                    continue
+            # Try to find a real gutter gap near the boundary.
+            # Returns the split index in the x-sorted line, or None.
+            split = self._find_gutter_split(line, boundary)
 
-            if right_words:
-                right_words.sort(key=lambda w: -w["x_center"])  # RTL
-                y = sum(w["y_center"] for w in right_words) / len(right_words)
-                right_col_lines.append((y, right_words))
+            if split is not None:
+                # Split at the actual gap (not at the boundary x-coord)
+                sorted_by_x = sorted(line, key=lambda w: w["x_min"])
+                left_words = sorted_by_x[:split]   # left side of gap
+                right_words = sorted_by_x[split:]   # right side of gap
 
-            if left_words:
-                left_words.sort(key=lambda w: -w["x_center"])  # RTL
-                y = sum(w["y_center"] for w in left_words) / len(left_words)
-                left_col_lines.append((y, left_words))
+                if right_words:
+                    right_words.sort(key=lambda w: -w["x_center"])  # RTL
+                    y = sum(w["y_center"] for w in right_words) / len(right_words)
+                    right_col_lines.append((y, right_words))
+
+                if left_words:
+                    left_words.sort(key=lambda w: -w["x_center"])  # RTL
+                    y = sum(w["y_center"] for w in left_words) / len(left_words)
+                    left_col_lines.append((y, left_words))
+            else:
+                # No gutter gap — single-column line, assign to dominant side
+                line_sorted = sorted(line, key=lambda w: -w["x_center"])
+                y = sum(w["y_center"] for w in line) / len(line)
+                line_center = sum(w["x_center"] for w in line) / len(line)
+                if line_center > boundary:
+                    right_col_lines.append((y, line_sorted))
+                else:
+                    left_col_lines.append((y, line_sorted))
 
         # Sort by y within each column
         right_col_lines.sort(key=lambda x: x[0])
@@ -399,15 +397,17 @@ class ColumnDetector:
         return False
 
     @staticmethod
-    def _has_gutter_gap(line: list[dict], boundary: float) -> bool:
-        """Check if a line has a real gutter gap at the column boundary.
+    def _find_gutter_split(line: list[dict], boundary: float) -> int | None:
+        """Find where to split a line at the column gutter.
 
-        Sorts words by x position and finds the gap that straddles the
-        boundary.  A real gutter is significantly wider than the normal
-        inter-word gaps in the line.
+        Looks for the largest inter-word gap near the boundary.  If it is
+        significantly wider than the other gaps, returns the split index
+        (in the x-sorted word list) so that words[:idx] are the left side
+        and words[idx:] are the right side.  Returns None if no real
+        gutter gap is found.
         """
         if len(line) < 3:
-            return False
+            return None
 
         # Sort words left-to-right by x_min
         sorted_words = sorted(line, key=lambda w: w["x_min"])
@@ -415,7 +415,7 @@ class ColumnDetector:
         # If the boundary runs through a word's bbox, it's not a gutter
         for w in sorted_words:
             if w["x_min"] <= boundary <= w["x_max"]:
-                return False
+                return None
 
         # Compute all inter-word gaps
         gaps = []
@@ -424,7 +424,7 @@ class ColumnDetector:
             gaps.append((gap, j))
 
         if not gaps:
-            return False
+            return None
 
         # Find the gap that straddles the boundary
         boundary_gap = None
@@ -438,18 +438,19 @@ class ColumnDetector:
                 break
 
         if boundary_gap is None:
-            return False
+            return None
 
-        # Compare to the MAXIMUM gap in the rest of the line (not median).
-        # In justified text, the largest normal gap can be close to the
-        # boundary gap.  A real gutter must be clearly larger than ALL
-        # normal inter-word gaps.
-        other_gaps = [g for g, j2 in gaps if g != boundary_gap or j2 != boundary_j]
+        # Compare to the MAXIMUM gap in the rest of the line.
+        # A real gutter must be clearly larger than normal word gaps.
+        other_gaps = [g for g, j2 in gaps if j2 != boundary_j]
         if not other_gaps:
-            return True  # only one gap and it's at the boundary
+            return boundary_j  # only one gap and it's at the boundary
 
         max_other_gap = max(other_gaps)
-        return boundary_gap > max_other_gap * 1.8
+        if boundary_gap > max_other_gap * 1.8:
+            return boundary_j
+
+        return None
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
         """Convert lines of words to text (single column)."""
