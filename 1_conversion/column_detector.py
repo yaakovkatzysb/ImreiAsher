@@ -135,7 +135,7 @@ class ColumnDetector:
 
             # Try to find a real gutter gap near the boundary.
             # Returns the split index in the x-sorted line, or None.
-            split = self._find_gutter_split(line, boundary)
+            split = self._find_gutter_split(line, boundary, page_width)
 
             if split is not None:
                 # Split at the actual gap (not at the boundary x-coord)
@@ -397,7 +397,7 @@ class ColumnDetector:
         return False
 
     @staticmethod
-    def _find_gutter_split(line: list[dict], boundary: float) -> int | None:
+    def _find_gutter_split(line: list[dict], boundary: float, page_width: float = 0) -> int | None:
         """Find where to split a line at the column gutter.
 
         Looks for the largest inter-word gap near the boundary.  If it is
@@ -408,6 +408,17 @@ class ColumnDetector:
         """
         if len(line) < 3:
             return None
+
+        # A line that fits within a single column should never be split.
+        # Justified text can have large inter-word gaps that mimic a gutter,
+        # but the line still only spans ~45% of the page.  Require >55% to
+        # even consider splitting.
+        if page_width > 0:
+            line_x_min = min(w["x_min"] for w in line)
+            line_x_max = max(w["x_max"] for w in line)
+            line_width = line_x_max - line_x_min
+            if line_width < page_width * 0.55:
+                return None
 
         # Sort words left-to-right by x_min
         sorted_words = sorted(line, key=lambda w: w["x_min"])

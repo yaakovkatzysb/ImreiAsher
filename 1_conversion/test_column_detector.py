@@ -226,3 +226,61 @@ class TestMultipleHeaderLines:
         header_pos = result.find("שיחת")
         col_pos = result.find("ימין0")
         assert header_pos < col_pos, "Header should appear before column text"
+
+
+class TestJustifiedTextNotSplit:
+    """Test that justified text lines with large gaps are not split by column detector."""
+
+    def setup_method(self):
+        self.detector = ColumnDetector()
+
+    def test_justified_line_not_split(self):
+        """
+        A justified line within one column (e.g. 'שצריך להיות באחדות כמו')
+        with large inter-word gaps should NOT be split across columns.
+        """
+        page_width = 1000
+
+        # Right column body text — one line has large justified gaps
+        right_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            right_col.append(_make_word(f"ימין{i}", 900, y, width=60))
+            right_col.append(_make_word(f"טקסט{i}", 800, y, width=60))
+            right_col.append(_make_word(f"עוד{i}", 700, y, width=60))
+            right_col.append(_make_word(f"מילה{i}", 600, y, width=60))
+
+        # Justified line in right column with large gaps (spans x=550 to x=950)
+        # Gaps are big (~60px) but the line only covers ~45% of page width
+        justified_line = [
+            _make_word("שצריך", 890, 400, width=60),
+            _make_word("להיות", 760, 400, width=60),
+            _make_word("באחדות", 630, 400, width=70),
+            _make_word("כמו", 550, 400, width=50),
+        ]
+
+        # Left column body text
+        left_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            left_col.append(_make_word(f"שמאל{i}", 400, y, width=60))
+            left_col.append(_make_word(f"עמוד{i}", 300, y, width=60))
+            left_col.append(_make_word(f"שני{i}", 200, y, width=60))
+            left_col.append(_make_word(f"צד{i}", 100, y, width=60))
+
+        words = right_col + justified_line + left_col
+        result = self.detector.reorder_by_columns(words)
+
+        # All words from the justified line must appear in the output
+        assert "שצריך" in result
+        assert "להיות" in result
+        assert "באחדות" in result
+        assert "כמו" in result
+
+        # They must appear together on the same line (not split across columns)
+        for line in result.split("\n"):
+            if "שצריך" in line:
+                assert "להיות" in line, "Justified line was split — 'להיות' missing"
+                assert "באחדות" in line, "Justified line was split — 'באחדות' missing"
+                assert "כמו" in line, "Justified line was split — 'כמו' missing"
+                break
+        else:
+            pytest.fail("Word 'שצריך' not found in any output line")
