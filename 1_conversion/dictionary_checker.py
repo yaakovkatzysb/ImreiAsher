@@ -205,8 +205,19 @@ class HebrewDictionaryChecker:
     # Above this confidence, OCR is trusted and the word is not flagged
     _HIGH_CONFIDENCE_THRESHOLD = 0.95
 
+    # Only flag these specific ambiguous pairs (to avoid noisy output).
+    # Each entry maps a word to the set of confusable alternatives.
+    _AMBIGUOUS_PAIRS: dict[str, set[str]] = {
+        'כמש"כ': {'כמש"נ'},
+        'כמש"נ': {'כמש"כ'},
+        'כ"מ': {'נ"מ'},
+        'נ"מ': {'כ"מ'},
+        'ב"כ': {'ב"נ'},
+        'ב"נ': {'ב"כ'},
+    }
+
     def flag_ambiguous_words(self, text: str, words_data: list[dict] = None) -> str:
-        """Flag words where a confusion swap also produces a valid word.
+        """Flag words that belong to known ambiguous כ↔נ pairs.
 
         Wraps ambiguous words with ⚠️ markers so a human can review them.
         Example: כמש"כ → ⚠️כמש"כ⚠️  (because כמש"נ is also valid)
@@ -219,8 +230,6 @@ class HebrewDictionaryChecker:
         Returns:
             Text with ⚠️ markers around ambiguous words.
         """
-        known = self.words | _BUILTIN_ABBREVIATIONS
-
         # Build a lookup from word text to symbol confidences
         sym_conf_map = {}
         if words_data:
@@ -237,31 +246,25 @@ class HebrewDictionaryChecker:
                 continue
 
             clean = token.strip("'׳.,;:!?)(")
-            if not clean or not self._is_known_or_abbrev(clean, known):
+            if clean not in self._AMBIGUOUS_PAIRS:
                 continue
 
+            # If we have confidence data and all confusable positions are
+            # high-confidence, trust the OCR and skip flagging
             sym_conf = sym_conf_map.get(token) or sym_conf_map.get(clean)
+            if sym_conf:
+                all_confident = True
+                for pos, ch in enumerate(clean):
+                    if ch in ("כ", "נ") and pos < len(sym_conf):
+                        conf = sym_conf[pos].get("confidence", 1.0)
+                        if conf < self._HIGH_CONFIDENCE_THRESHOLD:
+                            all_confident = False
+                            break
+                if all_confident:
+                    continue
 
-            # Check if any single-letter confusion swap also produces a known word
-            has_ambiguity = False
-            for pos, ch in enumerate(clean):
-                alternatives = _CONFUSION_MAP.get(ch, [])
-                for alt in alternatives:
-                    candidate = clean[:pos] + alt + clean[pos + 1:]
-                    if candidate != clean and (candidate in known or self._is_known(candidate)):
-                        # If we have confidence data and the letter is high-confidence, skip
-                        if sym_conf and pos < len(sym_conf):
-                            conf = sym_conf[pos].get("confidence", 1.0)
-                            if conf >= self._HIGH_CONFIDENCE_THRESHOLD:
-                                continue
-                        has_ambiguity = True
-                        break
-                if has_ambiguity:
-                    break
-
-            if has_ambiguity:
-                tokens[i] = f"⚠️{token}⚠️"
-                changed = True
+            tokens[i] = f"⚠️{token}⚠️"
+            changed = True
 
         return "".join(tokens) if changed else text
 
