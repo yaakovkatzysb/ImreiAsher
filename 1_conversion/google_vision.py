@@ -185,9 +185,11 @@ class GoogleVisionOCR:
     def _detach_trailing_quotes(self, words: list[dict]):
         """Move quote marks to the correct word when they are opening quotes.
 
-        Handles two cases:
-        1. Trailing quote embedded in a word: כמש"כ" → כמש"כ + "next
-        2. Standalone quote word after an abbreviation: כמש"כ, ", next → כמש"כ, "next
+        Handles three cases:
+        1. Trailing quote on abbreviation: כמש"כ" → כמש"כ + "next
+        2. Standalone quote after abbreviation: כמש"כ, ", next → כמש"כ, "next
+        3. Standalone/trailing quote using spatial proximity (bbox):
+           attach to whichever neighbor is physically closer.
         """
         i = 0
         while i < len(words) - 1:
@@ -215,7 +217,74 @@ class GoogleVisionOCR:
                     words.pop(i)
                     continue
 
+            # Case 3a: standalone quote — use bbox to decide opening vs closing
+            if text in self._QUOTE_CHARS and i + 1 < len(words):
+                if self._quote_closer_to_next(words, i):
+                    words[i + 1]["text"] = text + words[i + 1]["text"]
+                    words.pop(i)
+                    continue
+
+            # Case 3b: trailing quote on a regular word (no internal quotes) —
+            # use bbox gap to decide if it's an opening quote for the next word
+            if (len(text) > 2 and text[-1] in self._QUOTE_CHARS
+                    and not any(c in self._QUOTE_CHARS for c in text[1:-1])
+                    and i + 1 < len(words)):
+                if self._trailing_quote_is_opener(words, i):
+                    words[i]["text"] = text[:-1]
+                    words[i + 1]["text"] = text[-1] + words[i + 1]["text"]
+                    i += 1
+                    continue
+
             i += 1
+
+    @staticmethod
+    def _quote_closer_to_next(words: list[dict], i: int) -> bool:
+        """Check if a standalone quote word is spatially closer to the next word.
+
+        Uses edge-to-edge distances (not centers) so that word width
+        doesn't skew the result.  In RTL Hebrew:
+        - gap to prev word  = prev word's LEFT edge − quote's RIGHT edge
+        - gap to next word  = quote's LEFT edge − next word's RIGHT edge
+        """
+        curr = words[i].get("bbox")
+        next_w = words[i + 1].get("bbox") if i + 1 < len(words) else None
+        prev_w = words[i - 1].get("bbox") if i > 0 else None
+
+        if not curr or not next_w:
+            return False
+
+        quote_right = max(p[0] for p in curr)
+        quote_left = min(p[0] for p in curr)
+        next_right = max(p[0] for p in next_w)
+
+        if prev_w:
+            prev_left = min(p[0] for p in prev_w)
+            gap_to_prev = abs(prev_left - quote_right)
+            gap_to_next = abs(quote_left - next_right)
+            return gap_to_next < gap_to_prev
+
+        # No previous word — default to attaching to next
+        return True
+
+    _HEBREW_RE = __import__("re").compile(r"[\u0590-\u05FF]")
+
+    @classmethod
+    def _trailing_quote_is_opener(cls, words: list[dict], i: int) -> bool:
+        """Check if a trailing quote on a word is an opening quote for the next word.
+
+        Uses a content-based heuristic: if the next word starts with a
+        Hebrew letter, the quote is likely an opening quote.  If the next
+        word is punctuation, it's a closing quote that should stay.
+        """
+        if i + 1 >= len(words):
+            return False
+
+        next_text = words[i + 1]["text"]
+        if not next_text:
+            return False
+
+        # Opening quote → next word starts with Hebrew letter
+        return bool(cls._HEBREW_RE.match(next_text[0]))
 
     def _build_word_text(self, symbols) -> str:
         """Build word text from symbols, fixing yod-that-is-actually-geresh."""
