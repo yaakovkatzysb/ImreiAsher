@@ -54,8 +54,9 @@ class GoogleVisionOCR:
             # Old cache entries lack this, so re-run OCR to get full data.
             words = cached["words"]
             if words and "symbol_confidences" in words[0]:
-                # Always apply quote detachment on cached data too
-                self._detach_trailing_quotes(words)
+                # Apply dedup and quote detachment on cached data too
+                cached["words"] = self._deduplicate_words(words)
+                self._detach_trailing_quotes(cached["words"])
                 return cached
 
         image = vision.Image(content=image_bytes)
