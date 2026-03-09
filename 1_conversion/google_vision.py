@@ -115,6 +115,9 @@ class GoogleVisionOCR:
                                 "symbol_confidences": sym_conf,
                             })
 
+        # Remove duplicate words from overlapping blocks
+        words = self._deduplicate_words(words)
+
         # Post-process: detach trailing quotes that belong to the next word
         self._detach_trailing_quotes(words)
 
@@ -124,6 +127,52 @@ class GoogleVisionOCR:
             "languages": sorted(languages),
             "words": words,
         }
+
+    @staticmethod
+    def _deduplicate_words(words: list[dict]) -> list[dict]:
+        """Remove duplicate words that Google Vision returns from overlapping blocks.
+
+        When a word sits near a block boundary, Vision may include it in
+        both adjacent blocks.  We detect this by checking for words with
+        the same text whose bounding boxes overlap significantly.
+        """
+        if not words:
+            return words
+
+        def _bbox_overlap(a, b) -> bool:
+            """Check if two bounding boxes overlap by more than 50%."""
+            ax = [p[0] for p in a]
+            ay = [p[1] for p in a]
+            bx = [p[0] for p in b]
+            by = [p[1] for p in b]
+
+            a_min_x, a_max_x = min(ax), max(ax)
+            a_min_y, a_max_y = min(ay), max(ay)
+            b_min_x, b_max_x = min(bx), max(bx)
+            b_min_y, b_max_y = min(by), max(by)
+
+            # Intersection
+            ix = max(0, min(a_max_x, b_max_x) - max(a_min_x, b_min_x))
+            iy = max(0, min(a_max_y, b_max_y) - max(a_min_y, b_min_y))
+            intersection = ix * iy
+
+            # Smaller area
+            a_area = (a_max_x - a_min_x) * (a_max_y - a_min_y)
+            b_area = (b_max_x - b_min_x) * (b_max_y - b_min_y)
+            smaller = min(a_area, b_area)
+
+            return smaller > 0 and intersection > smaller * 0.5
+
+        kept = []
+        for w in words:
+            is_dup = False
+            for k in kept:
+                if k["text"] == w["text"] and _bbox_overlap(k["bbox"], w["bbox"]):
+                    is_dup = True
+                    break
+            if not is_dup:
+                kept.append(w)
+        return kept
 
     # Yod is often misread by OCR when the actual glyph is a geresh (׳).
     # A geresh is much smaller than a regular letter, so we detect this by

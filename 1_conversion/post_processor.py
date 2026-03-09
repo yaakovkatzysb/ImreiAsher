@@ -111,32 +111,7 @@ class PostProcessor:
         # Fix duplicate punctuation from OCR (e.g. ",," -> ",", "--" -> "-")
         result = re.sub(r"([,\.;:!?\-])\1+", r"\1", result)
 
-        # Remove consecutive duplicate words (common OCR artifact at column boundaries)
-        result = self._flag_duplicate_words(result)
-
         return result
-
-    @staticmethod
-    def _flag_duplicate_words(text: str) -> str:
-        """Flag consecutive duplicate words for human review.
-
-        Wraps the duplicate with ⚠️ markers instead of removing it,
-        since the original text may legitimately repeat a word.
-        E.g. "האדם האדם" → "האדם ⚠️האדם⚠️"
-        """
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            tokens = line.split()
-            if len(tokens) < 2:
-                continue
-            changed = False
-            for j in range(1, len(tokens)):
-                if tokens[j] == tokens[j - 1]:
-                    tokens[j] = f"⚠️{tokens[j]}⚠️"
-                    changed = True
-            if changed:
-                lines[i] = " ".join(tokens)
-        return "\n".join(lines)
 
     def _is_interstitial(self, line: str) -> bool:
         """Check if a line is an interstitial continuation marker."""
