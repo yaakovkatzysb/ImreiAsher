@@ -91,6 +91,11 @@ class ColumnDetector:
 
         logger.info(f"    זיהוי עמודות: {len(word_info)} מילים, {len(lines)} שורות")
 
+        # DEBUG: log first 5 lines with word positions
+        for li, line in enumerate(lines[:5]):
+            words_debug = [(w["text"], f"x={w['x_center']:.0f}", f"y={w['y_center']:.0f}", f"h={w['height']:.0f}") for w in line]
+            logger.info(f"    DEBUG שורה {li}: {words_debug}")
+
         # Detect and extract header lines by font size (before column split)
         avg_height = self._calc_avg_height(word_info)
         header_lines, body_lines = self._split_headers_by_font_size(lines, avg_height)
