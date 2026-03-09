@@ -272,14 +272,15 @@ class ColumnDetector:
     def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
         """Group words into text lines based on y-proximity.
 
-        Uses a fixed reference y (the first word in each line) rather than
-        a running average, so that edge words on a slightly curved scan
-        line are not split off into a separate line.
+        Uses a fixed reference y (the first word in each line) and an
+        adaptive threshold based on the tallest word in the current line,
+        so that large title words (which span a wider y-range) are not
+        split across lines.
         """
-        # Estimate line height
+        # Estimate baseline threshold from global word heights
         heights = [w["height"] for w in word_info if w["height"] > 5]
         avg_height = sum(heights) / len(heights) if heights else 30
-        threshold = avg_height * 0.7
+        base_threshold = avg_height * 0.7
 
         # Sort by y_center
         sorted_words = sorted(word_info, key=lambda w: w["y_center"])
@@ -289,7 +290,12 @@ class ColumnDetector:
         line_y_anchor = sorted_words[0]["y_center"]
 
         for w in sorted_words[1:]:
-            if abs(w["y_center"] - line_y_anchor) <= threshold:
+            # Adaptive: use the tallest word in the current line as threshold
+            # so large title words (h~90) get a wider tolerance than body (h~50)
+            current_max_h = max(cw["height"] for cw in current_line)
+            effective_threshold = max(base_threshold, current_max_h * 0.7)
+
+            if abs(w["y_center"] - line_y_anchor) <= effective_threshold:
                 current_line.append(w)
             else:
                 current_line.sort(key=lambda w: -w["x_center"])  # RTL
