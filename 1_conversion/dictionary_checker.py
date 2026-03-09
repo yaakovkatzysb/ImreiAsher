@@ -236,8 +236,8 @@ class HebrewDictionaryChecker:
             if not token or token.isspace():
                 continue
 
-            clean = token.strip("'׳")
-            if not self._is_known_or_abbrev(clean, known):
+            clean = token.strip("'׳.,;:!?)(")
+            if not clean or not self._is_known_or_abbrev(clean, known):
                 continue
 
             sym_conf = sym_conf_map.get(token) or sym_conf_map.get(clean)

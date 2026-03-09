@@ -155,8 +155,8 @@ class AdaptiveOCRPipeline:
                             page["text"] = page["text"].replace(wrong, right)
 
             # Step 3d: Flag ambiguous words (confusion swaps that produce valid alternatives)
-            if self.dictionary_checker.has_dictionary():
-                for page in pages_data:
+            # Runs even without external dictionary — built-in abbreviations are checked too
+            for page in pages_data:
                     if page.get("text"):
                         page["text"] = self.dictionary_checker.flag_ambiguous_words(
                             page["text"], page.get("words_data")
