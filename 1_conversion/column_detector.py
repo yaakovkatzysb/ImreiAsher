@@ -403,14 +403,19 @@ class ColumnDetector:
         """Check if a line has a real gutter gap at the column boundary.
 
         Sorts words by x position and finds the gap that straddles the
-        boundary.  If that gap is at least 2× the median inter-word gap
-        in the line, there's a real gutter and the line should be split.
+        boundary.  A real gutter is significantly wider than the normal
+        inter-word gaps in the line.
         """
-        if len(line) < 2:
+        if len(line) < 3:
             return False
 
         # Sort words left-to-right by x_min
         sorted_words = sorted(line, key=lambda w: w["x_min"])
+
+        # If the boundary runs through a word's bbox, it's not a gutter
+        for w in sorted_words:
+            if w["x_min"] <= boundary <= w["x_max"]:
+                return False
 
         # Compute all inter-word gaps
         gaps = []
@@ -431,14 +436,18 @@ class ColumnDetector:
                 break
 
         if boundary_gap is None:
-            # Boundary doesn't fall between any two adjacent words
             return False
 
-        # Compare to median gap in this line
-        gap_values = sorted(g for g, _ in gaps)
-        median_gap = gap_values[len(gap_values) // 2]
+        # Compare to the MAXIMUM gap in the rest of the line (not median).
+        # In justified text, the largest normal gap can be close to the
+        # boundary gap.  A real gutter must be clearly larger than ALL
+        # normal inter-word gaps.
+        other_gaps = [g for g, j2 in gaps if g != boundary_gap or j2 != j]
+        if not other_gaps:
+            return True  # only one gap and it's at the boundary
 
-        return boundary_gap > median_gap * 2
+        max_other_gap = max(other_gaps)
+        return boundary_gap > max_other_gap * 1.8
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
         """Convert lines of words to text (single column)."""
