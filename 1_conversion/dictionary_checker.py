@@ -318,7 +318,7 @@ class HebrewDictionaryChecker:
                 prefix = token[:len(token) - len(token.lstrip("'׳"))]
                 suffix = token[len(token.rstrip("'׳")):]
                 tokens[i] = prefix + best + suffix
-                logger.info(f"    תיקון בלבול אותיות: {token} → {tokens[i]}")
+                logger.debug(f"  מילון | תיקון בלבול: {token} → {tokens[i]}")
                 changed = True
 
         return "".join(tokens) if changed else text

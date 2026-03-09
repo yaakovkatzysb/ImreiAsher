@@ -112,11 +112,11 @@ class AdaptiveOCRPipeline:
             Result dict with text, confidence, quality report
         """
         filename = pdf_path.name
-        logger.info(f"מעבד: {filename}")
+        logger.info(f"קובץ | מעבד: {filename}")
 
         # Check if already processed
         if not force and self.file_manager.is_already_processed(filename):
-            logger.info(f"  מדלג (כבר עובד): {filename}")
+            logger.info(f"קובץ | מדלג (כבר עובד): {filename}")
             return None
 
         start_time = time.time()
@@ -126,7 +126,7 @@ class AdaptiveOCRPipeline:
             images = self.file_manager.pdf_to_images(
                 pdf_path, dpi=self.config["processing"]["dpi"]
             )
-            logger.info(f"  הומרו {len(images)} עמודים לתמונות")
+            logger.info(f"  המרה | {len(images)} עמודים → תמונות")
 
             # Step 2: Process each page
             pages_data = []
@@ -162,7 +162,7 @@ class AdaptiveOCRPipeline:
                             page["text"], page.get("words_data")
                         )
 
-            logger.info(f"  עיבוד-אחר הושלם")
+            logger.debug("  עיבוד-אחר | הושלם")
 
             # Step 4: Quality checks on combined text
             full_text = "\n".join(p["text"] for p in pages_data if p.get("text"))
@@ -187,13 +187,13 @@ class AdaptiveOCRPipeline:
 
             score = quality_report.get("score", 0)
             logger.info(
-                f"  הושלם: {filename} | ביטחון={result['confidence']:.2%} | "
-                f"ציון={score}/100 | {elapsed:.1f}ש"
+                f"קובץ | הושלם: {filename} | "
+                f"ביטחון={result['confidence']:.2%} | ציון={score}/100 | {elapsed:.1f}ש"
             )
             return result
 
         except Exception as e:
-            logger.error(f"  נכשל: {filename} - {e}")
+            logger.error(f"קובץ | נכשל: {filename} — {e}")
             return {
                 "filename": filename,
                 "error": str(e),
@@ -205,12 +205,12 @@ class AdaptiveOCRPipeline:
         """Process a single page image through OCR with adaptive pre-processing."""
         # Assess quality
         quality_level, quality_score = self.preprocessor.assess_quality(image_bytes)
-        logger.info(f"    עמוד {page_num}: איכות={quality_level} ({quality_score:.2f})")
+        logger.debug(f"  עמוד {page_num} | איכות={quality_level} ({quality_score:.2f})")
 
         # Pre-process if needed
         if quality_level != "good":
             image_bytes = self.preprocessor.process(image_bytes, quality_level)
-            logger.info(f"    עמוד {page_num}: עיבוד מקדים הופעל ({quality_level})")
+            logger.debug(f"  עמוד {page_num} | עיבוד מקדים ({quality_level})")
 
         # OCR
         ocr_result = self.ocr.detect_text(image_bytes)
@@ -245,13 +245,13 @@ class AdaptiveOCRPipeline:
         """
         pdfs = self.file_manager.get_pdf_list()
         if not pdfs:
-            logger.warning("לא נמצאו קבצי PDF בתיקיית הקלט")
+            logger.warning("אצווה | לא נמצאו קבצי PDF בתיקיית הקלט")
             return []
 
         if limit > 0:
             pdfs = pdfs[:limit]
 
-        logger.info(f"מתחיל עיבוד של {len(pdfs)} קבצי PDF")
+        logger.info(f"אצווה | מתחיל עיבוד של {len(pdfs)} קבצי PDF")
         start_time = time.time()
 
         results = []
@@ -270,7 +270,7 @@ class AdaptiveOCRPipeline:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"שגיאה לא צפויה בעיבוד {pdf.name}: {e}")
+                    logger.error(f"קובץ | שגיאה לא צפויה: {pdf.name} — {e}")
 
         # Generate aggregate report
         successful = [r for r in results if "error" not in r]
@@ -279,7 +279,7 @@ class AdaptiveOCRPipeline:
 
         elapsed = time.time() - start_time
         logger.info(
-            f"העיבוד הושלם: {len(successful)}/{len(pdfs)} הצליחו | "
+            f"אצווה | הושלם: {len(successful)}/{len(pdfs)} הצליחו | "
             f"זמן כולל: {elapsed:.1f}ש"
         )
 
