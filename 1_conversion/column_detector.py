@@ -125,12 +125,18 @@ class ColumnDetector:
         left_col_lines = []
         spanning_lines = []  # Lines that span both columns (e.g. headers)
 
-        for line in lines:
+        for line_idx, line in enumerate(lines):
+            line_text_rtl = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
+            logger.debug(
+                f"  שורה {line_idx}: [{len(line)} מילים] '{line_text_rtl}'"
+            )
+
             # Check if this is a short centered line (header fragment)
             if self._is_centered_line(line, boundary, page_center, page_width):
                 line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
                 y = sum(w["y_center"] for w in line) / len(line)
                 spanning_lines.append((y, line_sorted))
+                logger.debug(f"    → סווגה כ: כותרת ממורכזת (חוצה)")
                 continue
 
             # Try to find a real gutter gap near the boundary.
@@ -142,6 +148,12 @@ class ColumnDetector:
                 sorted_by_x = sorted(line, key=lambda w: w["x_min"])
                 left_words = sorted_by_x[:split]   # left side of gap
                 right_words = sorted_by_x[split:]   # right side of gap
+
+                left_text = " ".join(w["text"] for w in left_words) if left_words else "(ריק)"
+                right_text = " ".join(w["text"] for w in right_words) if right_words else "(ריק)"
+                logger.debug(
+                    f"    → פוצלה! ימין: '{right_text}' | שמאל: '{left_text}'"
+                )
 
                 if right_words:
                     right_words.sort(key=lambda w: -w["x_center"])  # RTL
@@ -157,6 +169,8 @@ class ColumnDetector:
                 line_sorted = sorted(line, key=lambda w: -w["x_center"])
                 y = sum(w["y_center"] for w in line) / len(line)
                 line_center = sum(w["x_center"] for w in line) / len(line)
+                side = "ימין" if line_center > boundary else "שמאל"
+                logger.debug(f"    → שורה שלמה → עמודה {side}")
                 if line_center > boundary:
                     right_col_lines.append((y, line_sorted))
                 else:
@@ -240,10 +254,15 @@ class ColumnDetector:
         header_lines = []
         body_lines = []
 
+        logger.debug(
+            f"  גופן | סף_כותרת={threshold:.0f}px (ממוצע={avg_height:.0f} × {self.HEADER_HEIGHT_FACTOR})"
+        )
+
         for line in lines:
             # Count how many words in this line have "large" height
             large_words = [w for w in line if w["height"] >= threshold]
             large_ratio = len(large_words) / len(line) if line else 0
+            line_text = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
 
             if large_ratio >= 0.6:
                 # Most words are large -> this is a header line
@@ -252,6 +271,9 @@ class ColumnDetector:
                 y = sum(w["y_center"] for w in line) / len(line)
                 avg_h = sum(w["height"] for w in line) / len(line)
                 header_lines.append({"text": text, "y": y, "avg_height": avg_h})
+                logger.debug(
+                    f"  גופן | כותרת ({large_ratio:.0%} גדולים, גובה_ממוצע={avg_h:.0f}px): '{line_text}'"
+                )
             else:
                 body_lines.append(line)
 
@@ -389,8 +411,8 @@ class ColumnDetector:
         # Short line near center -> header
         if width_ratio < 0.4 and center_offset < 0.15:
             logger.debug(
-                f"  עמודות | כותרת ממורכזת: '{' '.join(w['text'] for w in line)}' "
-                f"(רוחב={width_ratio:.0%}, היסט={center_offset:.0%})"
+                f"    ממורכזת | כן: רוחב={width_ratio:.0%} (<40%), "
+                f"היסט_מרכז={center_offset:.0%} (<15%)"
             )
             return True
 
@@ -406,7 +428,10 @@ class ColumnDetector:
         and words[idx:] are the right side.  Returns None if no real
         gutter gap is found.
         """
+        line_text = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
+
         if len(line) < 3:
+            logger.debug(f"    מרזב | דילוג (פחות מ-3 מילים): '{line_text}'")
             return None
 
         # A line that fits within a single column should never be split.
@@ -417,7 +442,11 @@ class ColumnDetector:
             line_x_min = min(w["x_min"] for w in line)
             line_x_max = max(w["x_max"] for w in line)
             line_width = line_x_max - line_x_min
+            width_ratio = line_width / page_width
             if line_width < page_width * 0.55:
+                logger.debug(
+                    f"    מרזב | דילוג (שורה צרה {width_ratio:.0%} < 55%): '{line_text}'"
+                )
                 return None
 
         # Sort words left-to-right by x_min
@@ -426,6 +455,9 @@ class ColumnDetector:
         # If the boundary runs through a word's bbox, it's not a gutter
         for w in sorted_words:
             if w["x_min"] <= boundary <= w["x_max"]:
+                logger.debug(
+                    f"    מרזב | דילוג (גבול חוצה מילה '{w['text']}'): '{line_text}'"
+                )
                 return None
 
         # Compute all inter-word gaps
@@ -436,6 +468,13 @@ class ColumnDetector:
 
         if not gaps:
             return None
+
+        # Log all gaps for debugging
+        gap_details = [
+            f"'{sorted_words[j-1]['text']}' ←{g:.0f}px→ '{sorted_words[j]['text']}'"
+            for g, j in gaps
+        ]
+        logger.debug(f"    מרזב | רווחים בשורה: {', '.join(gap_details)}")
 
         # Find the gap that straddles the boundary
         boundary_gap = None
@@ -449,18 +488,31 @@ class ColumnDetector:
                 break
 
         if boundary_gap is None:
+            logger.debug(f"    מרזב | דילוג (אין רווח על הגבול x={boundary:.0f}): '{line_text}'")
             return None
 
         # Compare to the MAXIMUM gap in the rest of the line.
         # A real gutter must be clearly larger than normal word gaps.
         other_gaps = [g for g, j2 in gaps if j2 != boundary_j]
         if not other_gaps:
+            logger.debug(
+                f"    מרזב | פיצול (רווח יחיד על הגבול, {boundary_gap:.0f}px): '{line_text}'"
+            )
             return boundary_j  # only one gap and it's at the boundary
 
         max_other_gap = max(other_gaps)
+        ratio = boundary_gap / max_other_gap if max_other_gap > 0 else float("inf")
         if boundary_gap > max_other_gap * 1.8:
+            logger.debug(
+                f"    מרזב | ✂ פיצול! רווח_גבול={boundary_gap:.0f}px, "
+                f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (סף=1.8x): '{line_text}'"
+            )
             return boundary_j
 
+        logger.debug(
+            f"    מרזב | לא פוצל: רווח_גבול={boundary_gap:.0f}px, "
+            f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (צריך >1.8x): '{line_text}'"
+        )
         return None
 
     def _lines_to_text(self, lines: list[list[dict]]) -> str:
