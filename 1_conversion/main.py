@@ -328,7 +328,10 @@ def main():
     args = parser.parse_args()
 
     if args.debug:
+        # DEBUG goes only to file, console stays at INFO
+        _file_handler.setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
+        _console_handler.setLevel(logging.INFO)
 
     pipeline = AdaptiveOCRPipeline(config_path=args.config)
 
