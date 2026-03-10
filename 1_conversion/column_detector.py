@@ -325,10 +325,12 @@ class ColumnDetector:
     def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
         """Group words into text lines based on y-proximity.
 
-        Uses a fixed reference y (the first word in each line) and an
+        Uses a running-mean y anchor (updated as words join a line) and an
         adaptive threshold based on the tallest word in the current line,
         so that large title words (which span a wider y-range) are not
-        split across lines.
+        split across lines.  A second merge pass re-attaches short
+        fragments that drifted into a neighbouring line due to scan
+        distortion or page curvature.
         """
         # Estimate baseline threshold from global word heights
         heights = [w["height"] for w in word_info if w["height"] > 5]
@@ -338,9 +340,9 @@ class ColumnDetector:
         # Sort by y_center
         sorted_words = sorted(word_info, key=lambda w: w["y_center"])
 
-        lines = []
+        lines: list[list[dict]] = []
         current_line = [sorted_words[0]]
-        line_y_anchor = sorted_words[0]["y_center"]
+        line_y_sum = sorted_words[0]["y_center"]
 
         for w in sorted_words[1:]:
             # Adaptive: use the tallest word in the current line as threshold
@@ -348,16 +350,90 @@ class ColumnDetector:
             current_max_h = max(cw["height"] for cw in current_line)
             effective_threshold = max(base_threshold, current_max_h * 0.7)
 
-            if abs(w["y_center"] - line_y_anchor) <= effective_threshold:
+            # Running mean keeps the anchor centred on the *actual* line
+            line_y_mean = line_y_sum / len(current_line)
+
+            if abs(w["y_center"] - line_y_mean) <= effective_threshold:
                 current_line.append(w)
+                line_y_sum += w["y_center"]
             else:
                 current_line.sort(key=lambda w: -w["x_center"])  # RTL
                 lines.append(current_line)
                 current_line = [w]
-                line_y_anchor = w["y_center"]
+                line_y_sum = w["y_center"]
 
         current_line.sort(key=lambda w: -w["x_center"])
         lines.append(current_line)
+
+        # --- Second pass: merge short fragments into neighbours ----------
+        # A fragment (≤3 words) whose y-range overlaps with an adjacent
+        # line likely drifted there due to OCR / scan distortion.
+        lines = self._merge_short_fragments(lines, avg_height)
+
+        return lines
+
+    @staticmethod
+    def _merge_short_fragments(
+        lines: list[list[dict]], avg_height: float
+    ) -> list[list[dict]]:
+        """Merge very short line fragments into their best vertical neighbour."""
+        MAX_FRAGMENT_WORDS = 3
+        # A fragment is worth merging only if a neighbour's y-range overlaps
+        # within a generous tolerance (half the average word height).
+        tolerance = avg_height * 0.5
+
+        merged = True
+        while merged:
+            merged = False
+            new_lines: list[list[dict]] = []
+            skip: set[int] = set()
+            for i, line in enumerate(lines):
+                if i in skip:
+                    continue
+                if len(line) > MAX_FRAGMENT_WORDS:
+                    new_lines.append(line)
+                    continue
+
+                # Fragment – find the closest neighbouring line by y-mean
+                frag_y = sum(w["y_center"] for w in line) / len(line)
+                best_idx = -1
+                best_dist = float("inf")
+                for j, other in enumerate(lines):
+                    if j == i or j in skip or len(other) == 0:
+                        continue
+                    other_y = sum(w["y_center"] for w in other) / len(other)
+                    dist = abs(frag_y - other_y)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_idx = j
+
+                if best_idx == -1 or best_dist > avg_height * 1.2:
+                    # No suitable neighbour – keep as-is
+                    new_lines.append(line)
+                    continue
+
+                # Merge fragment into the neighbour
+                target = lines[best_idx]
+                frag_count = len(line)
+                target.extend(line)
+                target.sort(key=lambda w: -w["x_center"])  # RTL
+                line.clear()  # mark fragment as consumed
+                merged = True
+                logger.debug(
+                    f"  קיבוץ | מיזוג פרגמנט ({frag_count} מילים) לשורה שכנה "
+                    f"(Δy={best_dist:.0f}px)"
+                )
+
+            # Re-collect non-skipped lines (merged fragments already inside
+            # their target which is added via the normal branch above).
+            if merged:
+                lines = [l for l in lines if len(l) > 0]
+                # Re-sort each line RTL just in case
+                for l in lines:
+                    l.sort(key=lambda w: -w["x_center"])
+                break  # restart outer loop
+            else:
+                lines = new_lines
 
         return lines
 
