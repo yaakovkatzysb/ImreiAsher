@@ -41,7 +41,8 @@ class BidiFormatter(logging.Formatter):
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(BidiFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
-_file_handler = logging.FileHandler("ocr_pipeline.log", encoding="utf-8")
+_log_path = Path(__file__).resolve().parent / "ocr_pipeline.log"
+_file_handler = logging.FileHandler(_log_path, encoding="utf-8")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 
 logging.basicConfig(
@@ -221,6 +222,11 @@ class AdaptiveOCRPipeline:
             text = self.column_detector.reorder_by_columns(words)
         else:
             text = ocr_result["text"]
+
+        # Log every output line for debugging
+        for line_num, line in enumerate(text.splitlines(), 1):
+            if line.strip():
+                logger.debug(f"  עמוד {page_num} | שורה {line_num:>3}: {line}")
 
         return {
             "page_number": page_num,
