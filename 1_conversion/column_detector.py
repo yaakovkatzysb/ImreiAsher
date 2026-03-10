@@ -16,6 +16,15 @@ _PUNCT_NO_SPACE_BEFORE = re.compile(r"^[,\.;:!?\)\]\}\"״׳']+$")
 # Opening brackets/parens - should not have a space after them
 _PUNCT_NO_SPACE_AFTER = re.compile(r"^[\(\[\{]+$")
 
+# ── Targeted debug: prints detailed info only for lines containing these words ──
+_WATCH_KEYWORDS = {"באחדות", "שצריך"}
+
+
+def _is_watched(line):
+    """Check if line contains watched keywords."""
+    texts = {w["text"] for w in line}
+    return bool(texts & _WATCH_KEYWORDS)
+
 
 def _join_words(words) -> str:
     """Join word texts, suppressing spaces around punctuation tokens."""
@@ -136,6 +145,8 @@ class ColumnDetector:
                 line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
                 y = sum(w["y_center"] for w in line) / len(line)
                 spanning_lines.append((y, line_sorted))
+                if _is_watched(line):
+                    print(f"  [WATCH] → סווגה כ: כותרת ממורכזת (spanning) — הועברה מהמקום המקורי!")
                 logger.debug(f"    → סווגה כ: כותרת ממורכזת (חוצה)")
                 continue
 
@@ -151,6 +162,8 @@ class ColumnDetector:
 
                 left_text = " ".join(w["text"] for w in left_words) if left_words else "(ריק)"
                 right_text = " ".join(w["text"] for w in right_words) if right_words else "(ריק)"
+                if _is_watched(line):
+                    print(f"  [WATCH] → נפצלה! ימין: '{right_text}' | שמאל: '{left_text}'")
                 logger.debug(
                     f"    → פוצלה! ימין: '{right_text}' | שמאל: '{left_text}'"
                 )
@@ -170,6 +183,8 @@ class ColumnDetector:
                 y = sum(w["y_center"] for w in line) / len(line)
                 line_center = sum(w["x_center"] for w in line) / len(line)
                 side = "ימין" if line_center > boundary else "שמאל"
+                if _is_watched(line):
+                    print(f"  [WATCH] → שורה שלמה → עמודה {side}")
                 logger.debug(f"    → שורה שלמה → עמודה {side}")
                 if line_center > boundary:
                     right_col_lines.append((y, line_sorted))
@@ -263,6 +278,15 @@ class ColumnDetector:
             large_words = [w for w in line if w["height"] >= threshold]
             large_ratio = len(large_words) / len(line) if line else 0
             line_text = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
+
+            if _is_watched(line):
+                print(f"\n[WATCH] === בדיקת גודל פונט ===")
+                print(f"  טקסט: '{line_text}'")
+                print(f"  סף={threshold:.0f}px (ממוצע={avg_height:.0f}×{self.HEADER_HEIGHT_FACTOR})")
+                for w in line:
+                    tag = "גדול" if w["height"] >= threshold else "רגיל"
+                    print(f"  '{w['text']}' גובה={w['height']:.0f}px [{tag}]")
+                print(f"  יחס גדולים: {large_ratio:.0%} → {'כותרת' if large_ratio >= 0.6 else 'גוף'}")
 
             if large_ratio >= 0.6:
                 # Most words are large -> this is a header line
@@ -408,6 +432,13 @@ class ColumnDetector:
         width_ratio = line_width / page_width if page_width > 0 else 1
         center_offset = abs(line_center - page_center) / page_width if page_width > 0 else 1
 
+        if _is_watched(line):
+            result = width_ratio < 0.4 and center_offset < 0.15
+            print(f"\n[WATCH] === בדיקת מרכוז ===")
+            print(f"  רוחב שורה: {width_ratio:.0%} מהדף (סף: <40%)")
+            print(f"  היסט מהמרכז: {center_offset:.0%} (סף: <15%)")
+            print(f"  → {'ממורכזת (כותרת)!' if result else 'לא ממורכזת'}")
+
         # Short line near center -> header
         if width_ratio < 0.4 and center_offset < 0.15:
             logger.debug(
@@ -429,6 +460,11 @@ class ColumnDetector:
         gutter gap is found.
         """
         line_text = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
+        watched = _is_watched(line)
+        if watched:
+            print(f"\n[WATCH] === בדיקת מרזב (gutter split) ===")
+            print(f"  טקסט: '{line_text}'")
+            print(f"  מילים: {len(line)}")
 
         if len(line) < 3:
             logger.debug(f"    מרזב | דילוג (פחות מ-3 מילים): '{line_text}'")
@@ -444,6 +480,8 @@ class ColumnDetector:
             line_width = line_x_max - line_x_min
             width_ratio = line_width / page_width
             if line_width < page_width * 0.55:
+                if watched:
+                    print(f"  רוחב: {width_ratio:.0%} < 55% → לא מפצלים")
                 logger.debug(
                     f"    מרזב | דילוג (שורה צרה {width_ratio:.0%} < 55%): '{line_text}'"
                 )
@@ -474,6 +512,10 @@ class ColumnDetector:
             f"'{sorted_words[j-1]['text']}' ←{g:.0f}px→ '{sorted_words[j]['text']}'"
             for g, j in gaps
         ]
+        if watched:
+            print(f"  רווחים:")
+            for detail in gap_details:
+                print(f"    {detail}")
         logger.debug(f"    מרזב | רווחים בשורה: {', '.join(gap_details)}")
 
         # Find the gap that straddles the boundary
@@ -488,6 +530,8 @@ class ColumnDetector:
                 break
 
         if boundary_gap is None:
+            if watched:
+                print(f"  אין רווח על גבול העמודות (x={boundary:.0f}) → לא מפצלים")
             logger.debug(f"    מרזב | דילוג (אין רווח על הגבול x={boundary:.0f}): '{line_text}'")
             return None
 
@@ -503,12 +547,16 @@ class ColumnDetector:
         max_other_gap = max(other_gaps)
         ratio = boundary_gap / max_other_gap if max_other_gap > 0 else float("inf")
         if boundary_gap > max_other_gap * 1.8:
+            if watched:
+                print(f"  ✂ נחתכה! רווח_גבול={boundary_gap:.0f}px, מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x")
             logger.debug(
                 f"    מרזב | ✂ פיצול! רווח_גבול={boundary_gap:.0f}px, "
                 f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (סף=1.8x): '{line_text}'"
             )
             return boundary_j
 
+        if watched:
+            print(f"  לא נחתכה: רווח_גבול={boundary_gap:.0f}px, מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (צריך >1.8x)")
         logger.debug(
             f"    מרזב | לא פוצל: רווח_גבול={boundary_gap:.0f}px, "
             f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (צריך >1.8x): '{line_text}'"

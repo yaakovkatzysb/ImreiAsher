@@ -41,13 +41,9 @@ class BidiFormatter(logging.Formatter):
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(BidiFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
-_log_path = Path(__file__).resolve().parent / "ocr_pipeline.log"
-_file_handler = logging.FileHandler(_log_path, encoding="utf-8")
-_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[_console_handler, _file_handler],
+    handlers=[_console_handler],
 )
 logger = logging.getLogger(__name__)
 
@@ -330,14 +326,7 @@ def main():
     parser.add_argument("--file", help="Process a single PDF file")
     parser.add_argument("--pilot", type=int, default=0, help="Process only N files (pilot run)")
     parser.add_argument("--reprocess", action="store_true", help="Force reprocess all files")
-    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging (verbose)")
     args = parser.parse_args()
-
-    if args.debug:
-        # DEBUG goes only to file, console stays at INFO
-        _file_handler.setLevel(logging.DEBUG)
-        logging.getLogger().setLevel(logging.DEBUG)
-        _console_handler.setLevel(logging.INFO)
 
     pipeline = AdaptiveOCRPipeline(config_path=args.config)
 
