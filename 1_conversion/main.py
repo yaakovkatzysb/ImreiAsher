@@ -343,8 +343,10 @@ def main():
 
     if args.file:
         result = pipeline.process_single(Path(args.file), force=args.reprocess)
-        if result:
+        if result and "error" not in result:
             print(pipeline.reporter.file_report(result))
+        elif result:
+            logger.error(f"Processing failed: {result['error']}")
     else:
         pipeline.process_all(limit=args.pilot, force=args.reprocess)
 
