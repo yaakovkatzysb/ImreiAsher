@@ -284,3 +284,45 @@ class TestJustifiedTextNotSplit:
                 break
         else:
             pytest.fail("Word 'שצריך' not found in any output line")
+
+
+class TestSameYDifferentColumns:
+    """Test that lines at the same y-level in different columns are NOT merged."""
+
+    def setup_method(self):
+        self.detector = ColumnDetector()
+
+    def test_same_y_lines_not_merged(self):
+        """
+        Two column lines at the same y-level should remain separate.
+        This was the bug: _group_into_lines merged them into one long line,
+        and _find_gutter_split sometimes failed to re-split them.
+        """
+        page_width = 1000
+
+        # Right column (x > 500)
+        right_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            right_col.append(_make_word(f"ימין{i}א", 900, y, width=60))
+            right_col.append(_make_word(f"ימין{i}ב", 800, y, width=60))
+            right_col.append(_make_word(f"ימין{i}ג", 700, y, width=60))
+            right_col.append(_make_word(f"ימין{i}ד", 600, y, width=60))
+
+        # Left column (x < 500) — SAME y values
+        left_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            left_col.append(_make_word(f"שמאל{i}א", 400, y, width=60))
+            left_col.append(_make_word(f"שמאל{i}ב", 300, y, width=60))
+            left_col.append(_make_word(f"שמאל{i}ג", 200, y, width=60))
+            left_col.append(_make_word(f"שמאל{i}ד", 100, y, width=60))
+
+        words = right_col + left_col
+        result = self.detector.reorder_by_columns(words)
+
+        # No output line should contain words from BOTH columns
+        for line in result.split("\n"):
+            has_right = any(f"ימין" in line for _ in [1])
+            has_left = any(f"שמאל" in line for _ in [1])
+            assert not (has_right and has_left), (
+                f"Line merged words from both columns: '{line}'"
+            )
