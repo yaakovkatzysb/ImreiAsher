@@ -86,17 +86,13 @@ class ColumnDetector:
         if page_width <= 0:
             return _join_words(word_info)
 
-        # Detect column boundary BEFORE line grouping so that words from
-        # different columns are never merged into the same text line.
-        avg_height = self._calc_avg_height(word_info)
-        boundary = self._find_column_boundary(word_info, page_width, page_x_min)
-
-        # Group words into text lines (boundary-aware if two columns)
-        lines = self._group_into_lines(word_info, column_boundary=boundary)
+        # Group words into text lines
+        lines = self._group_into_lines(word_info)
 
         logger.debug(f"  עמודות | קלט: {len(word_info)} מילים → {len(lines)} שורות")
 
         # Detect and extract header lines by font size (before column split)
+        avg_height = self._calc_avg_height(word_info)
         header_lines, body_lines = self._split_headers_by_font_size(lines, avg_height)
 
         if header_lines:
@@ -106,9 +102,13 @@ class ColumnDetector:
         # Continue column detection on body lines only
         lines = body_lines
 
-        if not lines:
+        # Detect column boundary using histogram (from body words only)
+        body_words = [w for line in body_lines for w in line]
+        if not body_words:
             # All lines are headers
             return "\n".join(h["text"] for h in header_lines)
+
+        boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
         if boundary is None:
             logger.debug("  עמודות | תוצאה: עמודה אחת")
@@ -117,10 +117,10 @@ class ColumnDetector:
 
         logger.debug(f"  עמודות | גבול ב-x={boundary:.0f}")
 
+        # Calculate typical column line word count for comparison
         page_center = (page_x_min + page_x_max) / 2
 
-        # Lines are already column-pure thanks to boundary-aware grouping.
-        # Assign each body line to right column, left column, or spanning.
+        # Split lines into right column, left column, or spanning (headers)
         right_col_lines = []
         left_col_lines = []
         spanning_lines = []  # Lines that span both columns (e.g. headers)
@@ -139,16 +139,42 @@ class ColumnDetector:
                 logger.debug(f"    → סווגה כ: כותרת ממורכזת (חוצה)")
                 continue
 
-            # Assign to column based on mean x_center
-            line_sorted = sorted(line, key=lambda w: -w["x_center"])
-            y = sum(w["y_center"] for w in line) / len(line)
-            line_center = sum(w["x_center"] for w in line) / len(line)
-            side = "ימין" if line_center > boundary else "שמאל"
-            logger.debug(f"    → עמודה {side}")
-            if line_center > boundary:
-                right_col_lines.append((y, line_sorted))
+            # Try to find a real gutter gap near the boundary.
+            # Returns the split index in the x-sorted line, or None.
+            split = self._find_gutter_split(line, boundary, page_width)
+
+            if split is not None:
+                # Split at the actual gap (not at the boundary x-coord)
+                sorted_by_x = sorted(line, key=lambda w: w["x_min"])
+                left_words = sorted_by_x[:split]   # left side of gap
+                right_words = sorted_by_x[split:]   # right side of gap
+
+                left_text = " ".join(w["text"] for w in left_words) if left_words else "(ריק)"
+                right_text = " ".join(w["text"] for w in right_words) if right_words else "(ריק)"
+                logger.debug(
+                    f"    → פוצלה! ימין: '{right_text}' | שמאל: '{left_text}'"
+                )
+
+                if right_words:
+                    right_words.sort(key=lambda w: -w["x_center"])  # RTL
+                    y = sum(w["y_center"] for w in right_words) / len(right_words)
+                    right_col_lines.append((y, right_words))
+
+                if left_words:
+                    left_words.sort(key=lambda w: -w["x_center"])  # RTL
+                    y = sum(w["y_center"] for w in left_words) / len(left_words)
+                    left_col_lines.append((y, left_words))
             else:
-                left_col_lines.append((y, line_sorted))
+                # No gutter gap — single-column line, assign to dominant side
+                line_sorted = sorted(line, key=lambda w: -w["x_center"])
+                y = sum(w["y_center"] for w in line) / len(line)
+                line_center = sum(w["x_center"] for w in line) / len(line)
+                side = "ימין" if line_center > boundary else "שמאל"
+                logger.debug(f"    → שורה שלמה → עמודה {side}")
+                if line_center > boundary:
+                    right_col_lines.append((y, line_sorted))
+                else:
+                    left_col_lines.append((y, line_sorted))
 
         # Sort by y within each column
         right_col_lines.sort(key=lambda x: x[0])
@@ -272,9 +298,7 @@ class ColumnDetector:
             return header_text
         return header_text + "\n\n" + body_text
 
-    def _group_into_lines(
-        self, word_info: list[dict], column_boundary: float | None = None
-    ) -> list[list[dict]]:
+    def _group_into_lines(self, word_info: list[dict]) -> list[list[dict]]:
         """Group words into text lines based on y-proximity.
 
         Uses a running-mean y anchor (updated as words join a line) and an
@@ -283,10 +307,6 @@ class ColumnDetector:
         split across lines.  A second merge pass re-attaches short
         fragments that drifted into a neighbouring line due to scan
         distortion or page curvature.
-
-        If *column_boundary* is given, words on opposite sides of the
-        boundary are never merged into the same line, preventing body
-        text from different columns from being joined.
         """
         # Estimate baseline threshold from global word heights
         heights = [w["height"] for w in word_info if w["height"] > 5]
@@ -310,19 +330,6 @@ class ColumnDetector:
             line_y_mean = line_y_sum / len(current_line)
 
             if abs(w["y_center"] - line_y_mean) <= effective_threshold:
-                # Prevent merging words from different columns
-                if column_boundary is not None:
-                    line_x_mean = (
-                        sum(cw["x_center"] for cw in current_line) / len(current_line)
-                    )
-                    if (line_x_mean > column_boundary) != (
-                        w["x_center"] > column_boundary
-                    ):
-                        current_line.sort(key=lambda w: -w["x_center"])
-                        lines.append(current_line)
-                        current_line = [w]
-                        line_y_sum = w["y_center"]
-                        continue
                 current_line.append(w)
                 line_y_sum += w["y_center"]
             else:
@@ -337,15 +344,13 @@ class ColumnDetector:
         # --- Second pass: merge short fragments into neighbours ----------
         # A fragment (≤3 words) whose y-range overlaps with an adjacent
         # line likely drifted there due to OCR / scan distortion.
-        lines = self._merge_short_fragments(lines, avg_height, column_boundary)
+        lines = self._merge_short_fragments(lines, avg_height)
 
         return lines
 
     @staticmethod
     def _merge_short_fragments(
-        lines: list[list[dict]],
-        avg_height: float,
-        column_boundary: float | None = None,
+        lines: list[list[dict]], avg_height: float
     ) -> list[list[dict]]:
         """Merge very short line fragments into their best vertical neighbour."""
         MAX_FRAGMENT_WORDS = 3
@@ -382,15 +387,6 @@ class ColumnDetector:
                     # No suitable neighbour – keep as-is
                     new_lines.append(line)
                     continue
-
-                # Don't merge fragments across the column boundary
-                if column_boundary is not None:
-                    frag_x = sum(w["x_center"] for w in line) / len(line)
-                    target = lines[best_idx]
-                    target_x = sum(w["x_center"] for w in target) / len(target)
-                    if (frag_x > column_boundary) != (target_x > column_boundary):
-                        new_lines.append(line)
-                        continue
 
                 # Merge fragment into the neighbour
                 target = lines[best_idx]
@@ -441,16 +437,11 @@ class ColumnDetector:
         if third_start >= third_end:
             return None
 
-        # Among bins with the minimum count, prefer the one closest to the
-        # page center — that is the most likely real gutter.
-        page_center_bin = num_bins // 2
         min_count = float("inf")
         min_idx = -1
         for i in range(third_start, third_end):
             if bins[i] < min_count:
                 min_count = bins[i]
-                min_idx = i
-            elif bins[i] == min_count and abs(i - page_center_bin) < abs(min_idx - page_center_bin):
                 min_idx = i
 
         # The gutter bin should have very few words compared to average
