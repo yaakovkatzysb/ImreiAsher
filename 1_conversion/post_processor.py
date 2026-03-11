@@ -113,8 +113,12 @@ class PostProcessor:
 
         # Fix quote-before-punctuation from OCR (e.g. '".' -> '."', '"?' -> '?"')
         # In Hebrew text, sentence-ending punctuation belongs before the closing quote.
-        # Match all quote variants: ASCII ", gershayim ״, curly """, geresh ׳, apostrophe '
-        result = re.sub(r'([\"״""\'׳])([\.,;:!?])', r"\2\1", result)
+        # Match all quote variants including curly/smart quotes (U+201C/U+201D)
+        result = re.sub(
+            r'([\u0022\u05F4\u201C\u201D\u201E\u0027\u05F3\u2018\u2019])([\.,;:!?])',
+            r"\2\1",
+            result,
+        )
 
         # Fix reversed parentheses from RTL OCR
         result = self._fix_rtl_parentheses(result)
