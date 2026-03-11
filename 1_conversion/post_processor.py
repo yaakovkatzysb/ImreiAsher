@@ -111,6 +111,10 @@ class PostProcessor:
         # Fix duplicate punctuation from OCR (e.g. ",," -> ",", "--" -> "-")
         result = re.sub(r"([,\.;:!?\-])\1+", r"\1", result)
 
+        # Fix quote-before-punctuation from OCR (e.g. '".' -> '."', '"?' -> '?"')
+        # In Hebrew text, sentence-ending punctuation belongs before the closing quote
+        result = re.sub(r'([\"״""])([\.,;:!?])', r"\2\1", result)
+
         # Fix reversed parentheses from RTL OCR
         result = self._fix_rtl_parentheses(result)
 
