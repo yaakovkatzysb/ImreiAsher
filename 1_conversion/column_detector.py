@@ -132,23 +132,27 @@ class ColumnDetector:
         # lines.  This avoids the fragile gutter-split logic that fails
         # when OCR produces irregular inter-word gaps.
         #
-        # Shift the split boundary leftward by a fraction of the average
-        # word width.  In Hebrew RTL text, the last word on a right-column
-        # line sits near the gutter and its x_center can fall just left of
-        # the histogram boundary.  The shift keeps these words in the
-        # right column where they belong.
+        # Classify words into right/left columns using a robust rule:
+        # A word belongs to the RIGHT column if its rightmost edge (x_max)
+        # extends clearly past the boundary.  In Hebrew RTL text, even the
+        # last word on a right-column line (sitting near the gutter) has
+        # its x_max well into the right column zone.  Left-column words,
+        # by contrast, have their x_max near or to the left of the boundary.
+        #
+        # We add a small tolerance (20% of avg word width) to avoid pulling
+        # left-column words whose x_max barely crosses the boundary.
         avg_word_width = (
             sum(w["x_max"] - w["x_min"] for w in body_words) / len(body_words)
         )
-        split_x = boundary - avg_word_width * 0.4
+        split_x_max = boundary + avg_word_width * 0.2
 
         logger.debug(
-            f"  עמודות | גבול={boundary:.0f}, הסחה={avg_word_width * 0.4:.0f}px, "
-            f"פיצול_בפועל={split_x:.0f}"
+            f"  עמודות | גבול={boundary:.0f}, סף_x_max={split_x_max:.0f}px "
+            f"(גבול + {avg_word_width * 0.2:.0f}px)"
         )
 
-        right_words = [w for w in body_words if w["x_center"] > split_x]
-        left_words = [w for w in body_words if w["x_center"] <= split_x]
+        right_words = [w for w in body_words if w["x_max"] > split_x_max]
+        left_words = [w for w in body_words if w["x_max"] <= split_x_max]
 
         logger.debug(
             f"  עמודות | חלוקת מילים: ימין={len(right_words)}, שמאל={len(left_words)}"
