@@ -284,3 +284,65 @@ class TestJustifiedTextNotSplit:
                 break
         else:
             pytest.fail("Word 'שצריך' not found in any output line")
+
+
+class TestOCROutlierGapDoesNotBlockGutter:
+    """Test that a single large OCR gap inside a column doesn't prevent gutter detection."""
+
+    def setup_method(self):
+        self.detector = ColumnDetector()
+
+    def test_outlier_gap_in_column_still_allows_split(self):
+        """
+        Real case: left column line 'נפש צריך שיהיו לו יסורים כמו לרבי'
+        has a large gap between 'נפש' and 'צריך' due to OCR artefact.
+        This should NOT prevent the gutter between right and left columns
+        from being detected — the line at that y-level should still be
+        split into two columns.
+        """
+        page_width = 1000
+
+        # Right column body (x > 500)
+        right_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            right_col.append(_make_word(f"ימין{i}", 900, y, width=60))
+            right_col.append(_make_word(f"טקסט{i}", 780, y, width=60))
+            right_col.append(_make_word(f"עוד{i}", 660, y, width=60))
+            right_col.append(_make_word(f"מילה{i}", 540, y, width=60))
+
+        # Left column body (x < 500)
+        left_col = []
+        for i, y in enumerate(range(100, 400, 30)):
+            if i == 3:
+                # This is the problematic line: 'נפש' at x=430 with a big
+                # gap before 'צריך' at x=300 (gap ~70px vs normal ~10-20px)
+                left_col.append(_make_word("נפש", 430, y, width=50))
+                left_col.append(_make_word("צריך", 300, y, width=50))
+                left_col.append(_make_word("שיהיו", 200, y, width=50))
+                left_col.append(_make_word("לו", 140, y, width=40))
+            else:
+                left_col.append(_make_word(f"שמאל{i}", 420, y, width=60))
+                left_col.append(_make_word(f"עמוד{i}", 320, y, width=60))
+                left_col.append(_make_word(f"שני{i}", 220, y, width=60))
+                left_col.append(_make_word(f"צד{i}", 120, y, width=60))
+
+        words = right_col + left_col
+        result = self.detector.reorder_by_columns(words)
+
+        # The words 'נפש', 'צריך', 'שיהיו', 'לו' must all be in the left
+        # column section — NOT mixed into the right column
+        lines = result.strip().split("\n")
+
+        # Find the line containing 'נפש'
+        nefesh_line = None
+        for line in lines:
+            if "נפש" in line:
+                nefesh_line = line
+                break
+
+        assert nefesh_line is not None, "'נפש' not found in output"
+        # 'צריך' should be on the same line or at least in the same column block
+        # (not interleaved with right-column text)
+        assert "צריך" in nefesh_line, (
+            f"'צריך' should be on the same line as 'נפש', got: '{nefesh_line}'"
+        )

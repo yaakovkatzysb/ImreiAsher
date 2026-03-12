@@ -585,9 +585,27 @@ class ColumnDetector:
             )
             return boundary_j
 
+        # Fallback: if one outlier gap inside a column is masking the real
+        # gutter, compare against the MEDIAN gap instead.  A single OCR
+        # artefact (e.g. extra whitespace between two words) can inflate
+        # max_other_gap and defeat the 1.8x check above.  The median is
+        # robust to such outliers.
+        sorted_others = sorted(other_gaps)
+        median_other = sorted_others[len(sorted_others) // 2]
+        avg_word_h = sum(w["y_max"] - w["y_min"] for w in line) / len(line)
+        median_ratio = boundary_gap / median_other if median_other > 0 else float("inf")
+        if boundary_gap > median_other * 3.0 and boundary_gap > avg_word_h:
+            logger.debug(
+                f"    מרזב | ✂ פיצול (fallback מדיאנה)! רווח_גבול={boundary_gap:.0f}px, "
+                f"מדיאנה={median_other:.0f}px, יחס={median_ratio:.1f}x (סף=3.0x), "
+                f"מקס_אחר={max_other_gap:.0f}px: '{line_text}'"
+            )
+            return boundary_j
+
         logger.debug(
             f"    מרזב | לא פוצל: רווח_גבול={boundary_gap:.0f}px, "
-            f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (צריך >1.8x): '{line_text}'"
+            f"מקס_אחר={max_other_gap:.0f}px, יחס={ratio:.1f}x (צריך >1.8x), "
+            f"מדיאנה={median_other:.0f}px, יחס_מדיאנה={median_ratio:.1f}x (צריך >3.0x): '{line_text}'"
         )
         return None
 
