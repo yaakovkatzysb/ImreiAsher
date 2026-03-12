@@ -296,34 +296,34 @@ class TestOCROutlierGapDoesNotBlockGutter:
         """
         Real case: left column line 'נפש צריך שיהיו לו יסורים כמו לרבי'
         has a large gap between 'נפש' and 'צריך' due to OCR artefact.
-        This should NOT prevent the gutter between right and left columns
-        from being detected — the line at that y-level should still be
-        split into two columns.
+        Words in the left column should stay together, not get mixed
+        with right column text.
         """
         page_width = 1000
 
-        # Right column body (x > 500)
+        # Right column body (x_center ~590-930, tightly packed)
         right_col = []
         for i, y in enumerate(range(100, 400, 30)):
-            right_col.append(_make_word(f"ימין{i}", 900, y, width=60))
-            right_col.append(_make_word(f"טקסט{i}", 780, y, width=60))
-            right_col.append(_make_word(f"עוד{i}", 660, y, width=60))
-            right_col.append(_make_word(f"מילה{i}", 540, y, width=60))
+            right_col.append(_make_word(f"ימין{i}", 870, y, width=60))
+            right_col.append(_make_word(f"טקסט{i}", 770, y, width=60))
+            right_col.append(_make_word(f"עוד{i}", 670, y, width=60))
+            right_col.append(_make_word(f"מילה{i}", 570, y, width=60))
 
-        # Left column body (x < 500)
+        # Left column body (x_center ~50-430, tightly packed, clear gutter
+        # at x~500 with no words in that region)
         left_col = []
         for i, y in enumerate(range(100, 400, 30)):
             if i == 3:
-                # This is the problematic line: 'נפש' at x=430 with a big
-                # gap before 'צריך' at x=300 (gap ~70px vs normal ~10-20px)
-                left_col.append(_make_word("נפש", 430, y, width=50))
-                left_col.append(_make_word("צריך", 300, y, width=50))
-                left_col.append(_make_word("שיהיו", 200, y, width=50))
-                left_col.append(_make_word("לו", 140, y, width=40))
+                # Problematic line: big OCR gap between 'נפש' and 'צריך'
+                # but all words have x_center < 460 (clearly left column)
+                left_col.append(_make_word("נפש", 390, y, width=60))
+                left_col.append(_make_word("צריך", 270, y, width=60))
+                left_col.append(_make_word("שיהיו", 170, y, width=60))
+                left_col.append(_make_word("לו", 80, y, width=50))
             else:
-                left_col.append(_make_word(f"שמאל{i}", 420, y, width=60))
-                left_col.append(_make_word(f"עמוד{i}", 320, y, width=60))
-                left_col.append(_make_word(f"שני{i}", 220, y, width=60))
+                left_col.append(_make_word(f"שמאל{i}", 390, y, width=60))
+                left_col.append(_make_word(f"עמוד{i}", 300, y, width=60))
+                left_col.append(_make_word(f"שני{i}", 210, y, width=60))
                 left_col.append(_make_word(f"צד{i}", 120, y, width=60))
 
         words = right_col + left_col

@@ -117,64 +117,64 @@ class ColumnDetector:
 
         logger.debug(f"  עמודות | גבול ב-x={boundary:.0f}")
 
-        # Calculate typical column line word count for comparison
         page_center = (page_x_min + page_x_max) / 2
 
-        # Split lines into right column, left column, or spanning (headers)
+        # --- Column-first approach ---
+        # Split body words into right/left columns BEFORE grouping into
+        # lines.  This avoids the fragile gutter-split logic that fails
+        # when OCR produces irregular inter-word gaps.
+        right_words = [w for w in body_words if w["x_center"] > boundary]
+        left_words = [w for w in body_words if w["x_center"] <= boundary]
+
+        logger.debug(
+            f"  עמודות | חלוקת מילים: ימין={len(right_words)}, שמאל={len(left_words)}"
+        )
+
+        # Group into lines within each column independently
         right_col_lines = []
+        if right_words:
+            r_lines = self._group_into_lines(right_words)
+            for line in r_lines:
+                line.sort(key=lambda w: -w["x_center"])  # RTL
+                y = sum(w["y_center"] for w in line) / len(line)
+                right_col_lines.append((y, line))
+
         left_col_lines = []
-        spanning_lines = []  # Lines that span both columns (e.g. headers)
+        if left_words:
+            l_lines = self._group_into_lines(left_words)
+            for line in l_lines:
+                line.sort(key=lambda w: -w["x_center"])  # RTL
+                y = sum(w["y_center"] for w in line) / len(line)
+                left_col_lines.append((y, line))
 
-        for line_idx, line in enumerate(lines):
-            line_text_rtl = " ".join(w["text"] for w in sorted(line, key=lambda w: -w["x_center"]))
-            logger.debug(
-                f"  שורה {line_idx}: [{len(line)} מילים] '{line_text_rtl}'"
-            )
+        # Detect centered/spanning lines: check each line from BOTH columns
+        # for short centered lines that should span both columns (e.g. sub-headers)
+        spanning_lines = []
+        filtered_right = []
+        filtered_left = []
 
-            # Check if this is a short centered line (header fragment)
+        for y, line in right_col_lines:
             if self._is_centered_line(line, boundary, page_center, page_width):
-                line_sorted = sorted(line, key=lambda w: -w["x_center"])  # RTL
-                y = sum(w["y_center"] for w in line) / len(line)
-                spanning_lines.append((y, line_sorted))
-                logger.debug(f"    → סווגה כ: כותרת ממורכזת (חוצה)")
-                continue
-
-            # Try to find a real gutter gap near the boundary.
-            # Returns the split index in the x-sorted line, or None.
-            split = self._find_gutter_split(line, boundary, page_width)
-
-            if split is not None:
-                # Split at the actual gap (not at the boundary x-coord)
-                sorted_by_x = sorted(line, key=lambda w: w["x_min"])
-                left_words = sorted_by_x[:split]   # left side of gap
-                right_words = sorted_by_x[split:]   # right side of gap
-
-                left_text = " ".join(w["text"] for w in left_words) if left_words else "(ריק)"
-                right_text = " ".join(w["text"] for w in right_words) if right_words else "(ריק)"
+                spanning_lines.append((y, line))
                 logger.debug(
-                    f"    → פוצלה! ימין: '{right_text}' | שמאל: '{left_text}'"
+                    f"    → כותרת ממורכזת (ימין): '"
+                    + " ".join(w["text"] for w in line) + "'"
                 )
-
-                if right_words:
-                    right_words.sort(key=lambda w: -w["x_center"])  # RTL
-                    y = sum(w["y_center"] for w in right_words) / len(right_words)
-                    right_col_lines.append((y, right_words))
-
-                if left_words:
-                    left_words.sort(key=lambda w: -w["x_center"])  # RTL
-                    y = sum(w["y_center"] for w in left_words) / len(left_words)
-                    left_col_lines.append((y, left_words))
             else:
-                # No gutter gap — single-column line, assign to dominant side
-                line_sorted = sorted(line, key=lambda w: -w["x_center"])
-                y = sum(w["y_center"] for w in line) / len(line)
-                line_center = sum(w["x_center"] for w in line) / len(line)
-                side = "ימין" if line_center > boundary else "שמאל"
-                logger.debug(f"    → שורה שלמה → עמודה {side}")
-                if line_center > boundary:
-                    right_col_lines.append((y, line_sorted))
-                else:
-                    left_col_lines.append((y, line_sorted))
+                filtered_right.append((y, line))
+
+        for y, line in left_col_lines:
+            if self._is_centered_line(line, boundary, page_center, page_width):
+                spanning_lines.append((y, line))
+                logger.debug(
+                    f"    → כותרת ממורכזת (שמאל): '"
+                    + " ".join(w["text"] for w in line) + "'"
+                )
+            else:
+                filtered_left.append((y, line))
+
+        right_col_lines = filtered_right
+        left_col_lines = filtered_left
 
         # Sort by y within each column
         right_col_lines.sort(key=lambda x: x[0])
@@ -438,11 +438,22 @@ class ColumnDetector:
             return None
 
         min_count = float("inf")
-        min_idx = -1
         for i in range(third_start, third_end):
             if bins[i] < min_count:
                 min_count = bins[i]
-                min_idx = i
+
+        # Among all bins with min_count, pick the one closest to the page
+        # center.  This avoids selecting a small gap between words within
+        # one column when the real gutter (also empty) sits near center.
+        center_bin = num_bins / 2
+        min_idx = -1
+        best_dist = float("inf")
+        for i in range(third_start, third_end):
+            if bins[i] == min_count:
+                dist = abs(i - center_bin)
+                if dist < best_dist:
+                    best_dist = dist
+                    min_idx = i
 
         # The gutter bin should have very few words compared to average
         total_words = sum(bins)
