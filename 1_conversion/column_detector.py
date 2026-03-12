@@ -131,8 +131,24 @@ class ColumnDetector:
         # Split body words into right/left columns BEFORE grouping into
         # lines.  This avoids the fragile gutter-split logic that fails
         # when OCR produces irregular inter-word gaps.
-        right_words = [w for w in body_words if w["x_center"] > boundary]
-        left_words = [w for w in body_words if w["x_center"] <= boundary]
+        #
+        # Shift the split boundary leftward by a fraction of the average
+        # word width.  In Hebrew RTL text, the last word on a right-column
+        # line sits near the gutter and its x_center can fall just left of
+        # the histogram boundary.  The shift keeps these words in the
+        # right column where they belong.
+        avg_word_width = (
+            sum(w["x_max"] - w["x_min"] for w in body_words) / len(body_words)
+        )
+        split_x = boundary - avg_word_width * 0.4
+
+        logger.debug(
+            f"  עמודות | גבול={boundary:.0f}, הסחה={avg_word_width * 0.4:.0f}px, "
+            f"פיצול_בפועל={split_x:.0f}"
+        )
+
+        right_words = [w for w in body_words if w["x_center"] > split_x]
+        left_words = [w for w in body_words if w["x_center"] <= split_x]
 
         logger.debug(
             f"  עמודות | חלוקת מילים: ימין={len(right_words)}, שמאל={len(left_words)}"
