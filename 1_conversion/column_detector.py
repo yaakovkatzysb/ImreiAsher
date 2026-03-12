@@ -41,13 +41,16 @@ class ColumnDetector:
     # Header detection: words taller than avg_height * this factor are "large"
     HEADER_HEIGHT_FACTOR = 1.3
 
-    def reorder_by_columns(self, words: list[dict]) -> str:
+    def reorder_by_columns(self, words: list[dict], external_boundary: float | None = None) -> str:
         """
         Detect columns from word positions and return text in correct reading order.
 
         Args:
             words: List of dicts with 'text' and 'bbox' keys.
                    bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]].
+            external_boundary: Optional x-coordinate for column boundary,
+                   provided by an external layout detector (e.g. Surya).
+                   When given, skips histogram-based boundary detection.
 
         Returns:
             Text reordered by columns (right-to-left for Hebrew).
@@ -108,14 +111,19 @@ class ColumnDetector:
             # All lines are headers
             return "\n".join(h["text"] for h in header_lines)
 
-        boundary = self._find_column_boundary(body_words, page_width, page_x_min)
+        if external_boundary is not None:
+            boundary = external_boundary
+            logger.debug(f"  עמודות | גבול חיצוני (Surya) ב-x={boundary:.0f}")
+        else:
+            boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
         if boundary is None:
             logger.debug("  עמודות | תוצאה: עמודה אחת")
             body_text = self._lines_to_text(lines)
             return self._prepend_headers(header_lines, body_text)
 
-        logger.debug(f"  עמודות | גבול ב-x={boundary:.0f}")
+        if external_boundary is None:
+            logger.debug(f"  עמודות | גבול (היסטוגרמה) ב-x={boundary:.0f}")
 
         page_center = (page_x_min + page_x_max) / 2
 

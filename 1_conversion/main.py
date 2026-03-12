@@ -19,6 +19,7 @@ import yaml
 from bidi.algorithm import get_display
 
 from column_detector import ColumnDetector
+from layout_detector import SuryaLayoutDetector, _check_surya
 from database import Database
 from dictionary_checker import HebrewDictionaryChecker
 from file_manager import FileManager
@@ -77,6 +78,15 @@ class AdaptiveOCRPipeline:
         self.database = Database(self.config["paths"]["database_path"])
         self.reporter = Reporter(self.config["paths"]["output_reports_dir"])
         self.column_detector = ColumnDetector()
+        self.layout_detector = None
+        if _check_surya():
+            try:
+                self.layout_detector = SuryaLayoutDetector()
+                logger.info("Surya layout detector loaded — using AI-based column detection")
+            except Exception as e:
+                logger.warning(f"Surya layout detector failed to load: {e} — falling back to histogram")
+        else:
+            logger.info("Surya not installed — using histogram-based column detection")
         self.post_processor = PostProcessor(self.config.get("post_processing", {}))
 
         self.good_threshold = self.config["quality_assessment"]["good_threshold"]
@@ -215,7 +225,14 @@ class AdaptiveOCRPipeline:
         # Reorder text by columns (right-to-left for Hebrew)
         words = ocr_result.get("words", [])
         if words:
-            text = self.column_detector.reorder_by_columns(words)
+            # Use Surya for column boundary if available
+            external_boundary = None
+            if self.layout_detector:
+                try:
+                    external_boundary = self.layout_detector.find_boundary(image_bytes)
+                except Exception as e:
+                    logger.warning(f"  עמוד {page_num} | Surya failed: {e} — falling back to histogram")
+            text = self.column_detector.reorder_by_columns(words, external_boundary=external_boundary)
         else:
             text = ocr_result["text"]
 
