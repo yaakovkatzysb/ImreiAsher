@@ -41,16 +41,24 @@ class ColumnDetector:
     # Header detection: words taller than avg_height * this factor are "large"
     HEADER_HEIGHT_FACTOR = 1.3
 
-    def reorder_by_columns(self, words: list[dict], external_boundary: float | None = None) -> str:
+    def reorder_by_columns(
+        self,
+        words: list[dict],
+        column_regions: list[list[float]] | None = None,
+        external_boundary: float | None = None,
+    ) -> str:
         """
         Detect columns from word positions and return text in correct reading order.
 
         Args:
             words: List of dicts with 'text' and 'bbox' keys.
                    bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]].
-            external_boundary: Optional x-coordinate for column boundary,
-                   provided by an external layout detector (e.g. Surya).
-                   When given, skips histogram-based boundary detection.
+            column_regions: Optional list of column bounding boxes
+                   [[x_min, y_min, x_max, y_max], ...] from Surya,
+                   sorted right-to-left.  When given, words are assigned
+                   directly to the column region that contains them.
+            external_boundary: Optional x-coordinate for column boundary
+                   (legacy fallback).
 
         Returns:
             Text reordered by columns (right-to-left for Hebrew).
@@ -105,54 +113,46 @@ class ColumnDetector:
         # Continue column detection on body lines only
         lines = body_lines
 
-        # Detect column boundary using histogram (from body words only)
         body_words = [w for line in body_lines for w in line]
         if not body_words:
             # All lines are headers
             return "\n".join(h["text"] for h in header_lines)
 
-        if external_boundary is not None:
-            boundary = external_boundary
-            logger.debug(f"  עמודות | גבול חיצוני (Surya) ב-x={boundary:.0f}")
-        else:
-            boundary = self._find_column_boundary(body_words, page_width, page_x_min)
-
-        if boundary is None:
-            logger.debug("  עמודות | תוצאה: עמודה אחת")
-            body_text = self._lines_to_text(lines)
-            return self._prepend_headers(header_lines, body_text)
-
-        if external_boundary is None:
-            logger.debug(f"  עמודות | גבול (היסטוגרמה) ב-x={boundary:.0f}")
-
         page_center = (page_x_min + page_x_max) / 2
 
-        # --- Column-first approach ---
-        # Split body words into right/left columns BEFORE grouping into
-        # lines.  This avoids the fragile gutter-split logic that fails
-        # when OCR produces irregular inter-word gaps.
-        #
-        # Classify words into right/left columns using a robust rule:
-        # A word belongs to the RIGHT column if its rightmost edge (x_max)
-        # extends clearly past the boundary.  In Hebrew RTL text, even the
-        # last word on a right-column line (sitting near the gutter) has
-        # its x_max well into the right column zone.  Left-column words,
-        # by contrast, have their x_max near or to the left of the boundary.
-        #
-        # We add a small tolerance (20% of avg word width) to avoid pulling
-        # left-column words whose x_max barely crosses the boundary.
-        avg_word_width = (
-            sum(w["x_max"] - w["x_min"] for w in body_words) / len(body_words)
-        )
-        split_x_max = boundary + avg_word_width * 0.2
+        # --- Assign words to columns ---
+        if column_regions is not None and len(column_regions) >= 2:
+            # Use Surya's column regions directly: check which region
+            # contains each word (by center point).  This is far more
+            # robust than a single boundary line.
+            right_words, left_words = self._assign_by_regions(
+                body_words, column_regions
+            )
+            # Derive boundary for centered-line detection (midpoint of gap)
+            # column_regions is sorted right-to-left
+            right_reg, left_reg = column_regions[0], column_regions[1]
+            boundary = (left_reg[2] + right_reg[0]) / 2
+        else:
+            # Fallback: boundary-based split
+            if external_boundary is not None:
+                boundary = external_boundary
+                logger.debug(f"  עמודות | גבול חיצוני ב-x={boundary:.0f}")
+            else:
+                boundary = self._find_column_boundary(body_words, page_width, page_x_min)
 
-        logger.debug(
-            f"  עמודות | גבול={boundary:.0f}, סף_x_max={split_x_max:.0f}px "
-            f"(גבול + {avg_word_width * 0.2:.0f}px)"
-        )
+            if boundary is None:
+                logger.debug("  עמודות | תוצאה: עמודה אחת")
+                body_text = self._lines_to_text(lines)
+                return self._prepend_headers(header_lines, body_text)
 
-        right_words = [w for w in body_words if w["x_max"] > split_x_max]
-        left_words = [w for w in body_words if w["x_max"] <= split_x_max]
+            logger.debug(f"  עמודות | גבול (היסטוגרמה) ב-x={boundary:.0f}")
+
+            avg_word_width = (
+                sum(w["x_max"] - w["x_min"] for w in body_words) / len(body_words)
+            )
+            split_x_max = boundary + avg_word_width * 0.2
+            right_words = [w for w in body_words if w["x_max"] > split_x_max]
+            left_words = [w for w in body_words if w["x_max"] <= split_x_max]
 
         logger.debug(
             f"  עמודות | חלוקת מילים: ימין={len(right_words)}, שמאל={len(left_words)}"
@@ -264,6 +264,54 @@ class ColumnDetector:
         trim = max(1, len(heights) // 10)
         trimmed = heights[trim:-trim] if len(heights) > 20 else heights
         return sum(trimmed) / len(trimmed)
+
+    @staticmethod
+    def _assign_by_regions(
+        body_words: list[dict], column_regions: list[list[float]]
+    ) -> tuple[list[dict], list[dict]]:
+        """Assign words to right/left columns using Surya's region bounding boxes.
+
+        Each word is assigned to the column region that contains its center
+        point.  Words outside all regions go to the nearest column.
+        column_regions is sorted right-to-left (index 0 = right column).
+        """
+        right_reg = column_regions[0]  # [x_min, y_min, x_max, y_max]
+        left_reg = column_regions[1]
+
+        right_words: list[dict] = []
+        left_words: list[dict] = []
+
+        for w in body_words:
+            cx, cy = w["x_center"], w["y_center"]
+            in_right = (right_reg[0] <= cx <= right_reg[2] and
+                        right_reg[1] <= cy <= right_reg[3])
+            in_left = (left_reg[0] <= cx <= left_reg[2] and
+                       left_reg[1] <= cy <= left_reg[3])
+
+            if in_right and not in_left:
+                right_words.append(w)
+            elif in_left and not in_right:
+                left_words.append(w)
+            elif in_right and in_left:
+                # Overlapping regions — use x_center relative to midpoint
+                mid = (right_reg[0] + left_reg[2]) / 2
+                if cx > mid:
+                    right_words.append(w)
+                else:
+                    left_words.append(w)
+            else:
+                # Outside both regions — assign to nearest column by x distance
+                dist_right = abs(cx - (right_reg[0] + right_reg[2]) / 2)
+                dist_left = abs(cx - (left_reg[0] + left_reg[2]) / 2)
+                if dist_right <= dist_left:
+                    right_words.append(w)
+                else:
+                    left_words.append(w)
+
+        logger.debug(
+            f"  עמודות | Surya אזורים: ימין={len(right_words)}, שמאל={len(left_words)}"
+        )
+        return right_words, left_words
 
     def _split_headers_by_font_size(
         self, lines: list[list[dict]], avg_height: float

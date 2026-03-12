@@ -225,14 +225,14 @@ class AdaptiveOCRPipeline:
         # Reorder text by columns (right-to-left for Hebrew)
         words = ocr_result.get("words", [])
         if words:
-            # Use Surya for column boundary if available
-            external_boundary = None
+            # Use Surya for column region detection if available
+            column_regions = None
             if self.layout_detector:
                 try:
-                    external_boundary = self.layout_detector.find_boundary(image_bytes)
+                    column_regions = self.layout_detector.find_columns(image_bytes)
                 except Exception as e:
                     logger.warning(f"  עמוד {page_num} | Surya failed: {e} — falling back to histogram")
-            text = self.column_detector.reorder_by_columns(words, external_boundary=external_boundary)
+            text = self.column_detector.reorder_by_columns(words, column_regions=column_regions)
         else:
             text = ocr_result["text"]
 

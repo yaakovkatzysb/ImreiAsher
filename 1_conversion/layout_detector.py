@@ -1,5 +1,5 @@
 """
-Layout detection using Surya for accurate column boundary detection.
+Layout detection using Surya for accurate column detection.
 
 Surya uses a trained AI model to visually identify page layout regions
 (columns, headers, text blocks) from the page image itself, which is
@@ -7,9 +7,9 @@ far more robust than histogram-based heuristics on OCR word positions.
 
 Usage:
     detector = SuryaLayoutDetector()          # loads model once
-    boundary = detector.find_boundary(image_bytes)  # per page
-    # boundary is the x-coordinate separating left/right columns,
-    # or None if the page is single-column.
+    columns = detector.find_columns(image_bytes)  # per page
+    # columns is a list of [x_min, y_min, x_max, y_max] bounding boxes,
+    # sorted right-to-left (Hebrew reading order), or None if single-column.
 
 Install:
     pip install surya-ocr Pillow
@@ -54,16 +54,17 @@ class SuryaLayoutDetector:
         self._predictor = LayoutPredictor(self._foundation)
         logger.info("מודל Surya layout נטען בהצלחה")
 
-    def find_boundary(self, image_bytes: bytes) -> Optional[float]:
+    def find_columns(self, image_bytes: bytes) -> Optional[list[list[float]]]:
         """
-        Detect column boundary from a page image.
+        Detect column regions from a page image.
 
         Args:
             image_bytes: Raw image bytes (PNG/JPEG) of the page.
 
         Returns:
-            The x-coordinate of the column boundary (gutter center),
-            or None if the page is single-column.
+            List of column bounding boxes [[x_min, y_min, x_max, y_max], ...],
+            sorted right-to-left (Hebrew reading order).
+            Returns None if the page is single-column.
         """
         from PIL import Image
 
@@ -75,7 +76,7 @@ class SuryaLayoutDetector:
 
         page = results[0]
 
-        # Find all "Column" regions detected by Surya
+        # Find all "Column" / "Text" regions detected by Surya
         columns = [
             block for block in page.bboxes
             if block.label.lower() in ("column", "text")
@@ -94,36 +95,25 @@ class SuryaLayoutDetector:
             logger.debug("  surya | עמודה אחת (פחות מ-2 אזורים)")
             return None
 
-        # Sort columns by x-position (left to right)
-        columns.sort(key=lambda b: b.bbox[0])
-
-        # For a two-column layout, find the gap between the two main columns.
-        # Take the two largest (by area) column regions.
+        # Take the two largest (by area) column regions
         by_area = sorted(
             columns,
             key=lambda b: (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]),
             reverse=True,
         )
-        main_cols = sorted(by_area[:2], key=lambda b: b.bbox[0])
+        main_cols = by_area[:2]
 
-        # Boundary = midpoint between right edge of left column and
-        # left edge of right column
-        left_col_right = main_cols[0].bbox[2]   # x_max of left column
-        right_col_left = main_cols[1].bbox[0]   # x_min of right column
+        # Sort right-to-left (Hebrew reading order: rightmost column first)
+        main_cols.sort(key=lambda b: -b.bbox[0])
 
-        if right_col_left <= left_col_right:
-            # Columns overlap — can't determine boundary
-            logger.debug(
-                f"  surya | עמודות חופפות "
-                f"(שמאל_ימין={left_col_right:.0f}, ימין_שמאל={right_col_left:.0f})"
-            )
-            return None
-
-        boundary = (left_col_right + right_col_left) / 2
+        result = [list(b.bbox) for b in main_cols]
 
         logger.debug(
-            f"  surya | גבול ב-x={boundary:.0f} "
-            f"(שמאל עד {left_col_right:.0f}, ימין מ-{right_col_left:.0f})"
+            f"  surya | עמודות: "
+            + ", ".join(
+                f"[{r[0]:.0f},{r[1]:.0f},{r[2]:.0f},{r[3]:.0f}]"
+                for r in result
+            )
         )
 
-        return boundary
+        return result
