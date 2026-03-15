@@ -326,7 +326,11 @@ def main():
     parser.add_argument("--file", help="Process a single PDF file")
     parser.add_argument("--pilot", type=int, default=0, help="Process only N files (pilot run)")
     parser.add_argument("--reprocess", action="store_true", help="Force reprocess all files")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     pipeline = AdaptiveOCRPipeline(config_path=args.config)
 
