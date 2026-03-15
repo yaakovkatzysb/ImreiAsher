@@ -5,10 +5,13 @@ Handles text detection with confidence scores and caching.
 
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 
 from google.cloud import vision
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleVisionOCR:
@@ -95,6 +98,25 @@ class GoogleVisionOCR:
             if page.property and page.property.detected_languages:
                 for lang in page.property.detected_languages:
                     languages.add(lang.language_code)
+
+        # Log block structure to understand Vision's layout detection
+        for page in annotation.pages:
+            for block_idx, block in enumerate(page.blocks):
+                verts = block.bounding_box.vertices
+                xs = [v.x for v in verts]
+                ys = [v.y for v in verts]
+                para_count = len(block.paragraphs)
+                word_count = sum(len(p.words) for p in block.paragraphs)
+                first_words = []
+                for p in block.paragraphs:
+                    for w in p.words[:3]:
+                        first_words.append("".join(s.text for s in w.symbols))
+                logger.debug(
+                    f"  vision block {block_idx} | "
+                    f"x=[{min(xs)}-{max(xs)}], y=[{min(ys)}-{max(ys)}] | "
+                    f"{para_count} paragraphs, {word_count} words | "
+                    f"preview: {' '.join(first_words)}"
+                )
 
         # Extract individual words with positions (finest granularity for column detection)
         words = []
